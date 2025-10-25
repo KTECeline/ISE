@@ -7,8 +7,8 @@ app = Ursina()
 # The image will be scaled proportionally
 ground = Entity(
     model='plane',
-    # texture='assets/textures/map/Fungal_Wastes_50.png',  # Your PNG image here
-    texture='assets/textures/map/Fungal_Wastes_100.png',  # Your PNG image here
+    texture='assets/textures/map/Fungal_Wastes_50.png',  # Your PNG image here
+    # texture='assets/textures/map/Fungal_Wastes_100.png',  # Your PNG image here
     scale=(81, 1, 75),  # Proportional to image dimensions (8100:7500)
     collider='box',
     position=(0, 0, 0)
