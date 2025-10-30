@@ -1,6 +1,8 @@
 from ursina import *
 
 app = Ursina()
+# Remove the internal exit button
+window.exit_button.enabled = False
 
 # Create a visual ground plane with the main image
 ground = Entity(
