@@ -6,6 +6,12 @@ import math
 # Initialize Pygame
 pygame.init()
 
+# Initialize audio mixer (safe if system doesn't have audio — catch failures)
+try:
+    pygame.mixer.init()
+except Exception:
+    pass
+
 # Create a dummy display mode first to allow image loading (fixes "No video mode" error)
 dummy_screen = pygame.display.set_mode((1, 1), pygame.NOFRAME)
 
@@ -22,6 +28,7 @@ GOAL_RADIUS = 30  # Size of goal zones
 NUM_GOALS = 8  # More goals scattered across map
 PARTICLE_COUNT = 20  # Burst on hit
 MINIMAP_SIZE = (200, 150)  # Small minimap dimensions
+MINIMAP_ZOOM = 1.5  # >1 zooms in (shows smaller world area magnified); 1.0 = full world
 BASE_SCORE = 10  # Points per hit
 COMBO_MULTIPLIER = 2  # Double score on streak/multi-hit (one strike gets two = x2 more marks)
 POPUP_LIFETIME = 60  # Frames for score pop-up fade
@@ -40,6 +47,13 @@ try:
     collision_surface = collision_surface.convert_alpha()
 except pygame.error as e:
     sys.exit(1)
+
+# Load sound effects (optional — game continues if missing)
+scored_sound = None
+try:
+    scored_sound = pygame.mixer.Sound('assets/sounds/scored.mp3')
+except Exception:
+    scored_sound = None
 
 # World dimensions from map
 WORLD_WIDTH = map_image.get_width()
@@ -237,6 +251,12 @@ def check_goal_hit(ball_pos, ball_radius):
         score += points
         streak += hits_this_shot  # Build streak on hit(s)
         mushroom_ball.hit_this_shot = True
+        # Play scored sound if available
+        try:
+            if scored_sound:
+                scored_sound.play()
+        except Exception:
+            pass
         # Pop-up at ball pos (average if multi)
         avg_x = ball_pos[0]
         avg_y = ball_pos[1]
@@ -272,36 +292,51 @@ def update_camera():
 def draw_minimap(screen):
     """Draw small minimap in top-right showing scaled real map + elements."""
     minimap = pygame.Surface(MINIMAP_SIZE)
-    
-    # Mini size real map: Scale full map to minimap size
-    scaled_map = pygame.transform.scale(map_image, MINIMAP_SIZE)
+
+    # Choose a cropped region around the player (so the minimap is zoomed-in)
+    zoom = max(1.0, MINIMAP_ZOOM)
+    crop_w = max(1, int(WORLD_WIDTH / zoom))
+    crop_h = max(1, int(WORLD_HEIGHT / zoom))
+    # Center crop on player
+    center_x = int(player_pos[0])
+    center_y = int(player_pos[1])
+    crop_x = max(0, min(center_x - crop_w // 2, WORLD_WIDTH - crop_w))
+    crop_y = max(0, min(center_y - crop_h // 2, WORLD_HEIGHT - crop_h))
+    crop_rect = pygame.Rect(crop_x, crop_y, crop_w, crop_h)
+    try:
+        cropped = map_image.subsurface(crop_rect).copy()
+    except Exception:
+        # Fallback: scale the full map if subsurface fails
+        cropped = map_image.copy()
+    scaled_map = pygame.transform.scale(cropped, MINIMAP_SIZE)
     minimap.blit(scaled_map, (0, 0))
     
     # World border
     pygame.draw.rect(minimap, (255, 255, 255), (0, 0, MINIMAP_SIZE[0], MINIMAP_SIZE[1]), 1)
     
     # Player dot (blue)
-    scale_x = MINIMAP_SIZE[0] / WORLD_WIDTH
-    scale_y = MINIMAP_SIZE[1] / WORLD_HEIGHT
-    player_map_x = int(player_pos[0] * scale_x)
-    player_map_y = int(player_pos[1] * scale_y)
+    # Scale from the cropped world area to minimap size
+    scale_x = MINIMAP_SIZE[0] / crop_w
+    scale_y = MINIMAP_SIZE[1] / crop_h
+    player_map_x = int((player_pos[0] - crop_x) * scale_x)
+    player_map_y = int((player_pos[1] - crop_y) * scale_y)
     pygame.draw.circle(minimap, (0, 0, 255), (player_map_x, player_map_y), 3)
     
     # Goals (green dots, larger if remaining)
     for goal in goals:
-        goal_map_x = int(goal[0] * scale_x)
-        goal_map_y = int(goal[1] * scale_y)
+        goal_map_x = int((goal[0] - crop_x) * scale_x)
+        goal_map_y = int((goal[1] - crop_y) * scale_y)
         pygame.draw.circle(minimap, (0, 255, 0), (goal_map_x, goal_map_y), 3)
     
     # Mushroom ball if active (yellow)
     if mushroom_ball.active:
-        ball_map_x = int(mushroom_ball.pos[0] * scale_x)
-        ball_map_y = int(mushroom_ball.pos[1] * scale_y)
+        ball_map_x = int((mushroom_ball.pos[0] - crop_x) * scale_x)
+        ball_map_y = int((mushroom_ball.pos[1] - crop_y) * scale_y)
         pygame.draw.circle(minimap, (255, 255, 0), (ball_map_x, ball_map_y), 2)
     
     # Camera view box (white outline)
-    cam_map_x = int(cam_x * scale_x)
-    cam_map_y = int(cam_y * scale_y)
+    cam_map_x = int((cam_x - crop_x) * scale_x)
+    cam_map_y = int((cam_y - crop_y) * scale_y)
     cam_map_w = int(SCREEN_WIDTH * scale_x)
     cam_map_h = int(SCREEN_HEIGHT * scale_y)
     pygame.draw.rect(minimap, (255, 255, 255), (cam_map_x, cam_map_y, cam_map_w, cam_map_h), 1)
