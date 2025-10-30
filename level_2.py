@@ -19,12 +19,13 @@ BALL_FRICTION = 0.98  # Slow down over time
 COLLISION_COLOR = (255, 0, 0)  # Red for walls; tolerance for slight variations
 TOLERANCE = 50  # Allow minor RGB variations in red detection
 GOAL_RADIUS = 30  # Size of goal zones
-NUM_GOALS = 8  # Even more goals for challenge
+NUM_GOALS = 8  # More goals scattered across map
 PARTICLE_COUNT = 20  # Burst on hit
-VISIBLE_RADIUS = 800  # Spawn goals within this radius of start for visibility
 MINIMAP_SIZE = (200, 150)  # Small minimap dimensions
-BASE_SCORE = 10  # Per goal
-BONUS_SCORE = 20  # For hitting 2+ in one shot (combo)
+BASE_SCORE = 10  # Points per hit
+COMBO_MULTIPLIER = 2  # Double score on streak/multi-hit (one strike gets two = x2 more marks)
+POPUP_LIFETIME = 60  # Frames for score pop-up fade
+FORBIDDEN_Y_MAX = 4215  # No goals above this y-line (higher y = above, so spawn y > 4215)
 
 # Paths to your files (update if needed)
 MAP_PATH = 'assets/textures/map/Level_2_map.png'
@@ -37,11 +38,7 @@ try:
     # Convert after loading to optimize
     map_image = map_image.convert()
     collision_surface = collision_surface.convert_alpha()
-    print(f"Loaded map size: {map_image.get_size()}")
-    print(f"Loaded collision size: {collision_surface.get_size()}")
 except pygame.error as e:
-    print(f"Error loading images: {e}")
-    print("Check file paths and ensure images exist.")
     sys.exit(1)
 
 # World dimensions from map
@@ -50,11 +47,11 @@ WORLD_HEIGHT = map_image.get_height()
 
 # Now set real screen
 screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
-pygame.display.set_caption("Level 2: Sporeball Gauntlet - Minimap Real Map + Scoring!")
+pygame.display.set_caption("Level 2: Sporeball Gauntlet - Goals Only Below y=4215!")
 clock = pygame.time.Clock()
 
-# Player setup in WORLD coordinates (start near top-left, adjust if needed)
-player_pos = [200.0, 200.0]  # Float for smooth movement; tweak if starting on wall
+# Player setup in WORLD coordinates (start near ball for convenience)
+player_pos = [730.0, 8230.0]  # Near ball start
 player_radius = 20  # Simple circle for testing
 
 # Camera setup (follows player, keeps player centered)
@@ -64,7 +61,33 @@ cam_target_x, cam_target_y = cam_x, cam_y  # For lerping to ball
 
 # Scoring
 score = 0
-combo_hits = 0  # Track hits in current shot for bonus
+streak = 0  # For combo (one strike = double next score)
+
+# Score pop-up effect
+class ScorePopup:
+    def __init__(self, x, y, points):
+        self.x = x  # World x
+        self.y = y  # World y
+        self.points = points
+        self.lifetime = POPUP_LIFETIME
+        self.start_y = y
+
+    def update(self):
+        self.y -= 1  # Float up
+        self.lifetime -= 1
+        return self.lifetime > 0
+
+    def draw(self, screen, cam_x, cam_y):
+        if self.lifetime <= 0:
+            return
+        screen_x = int(self.x - cam_x)
+        screen_y = int(self.y - cam_y)
+        alpha = int(255 * (self.lifetime / POPUP_LIFETIME))
+        text = font.render(f"+{self.points}", True, (255, 255, 0))
+        text.set_alpha(alpha)
+        screen.blit(text, (screen_x - 10, screen_y))
+
+popups = []  # List of active pop-ups
 
 # Particle for goal hit burst
 class SporeParticle(pygame.sprite.Sprite):
@@ -91,14 +114,14 @@ particles = pygame.sprite.Group()
 # Mushroom Ball (sporeball, football-like but mushroom-themed)
 class MushroomBall:
     def __init__(self):
-        self.pos = [0.0, 0.0]  # World pos
+        self.pos = [730.0, 8230.0]  # Start at specified position
         self.vel = [0.0, 0.0]  # Velocity
         self.radius = 15
         self.active = False  # Not shot yet
         self.stopped = True  # For reset
+        self.hit_this_shot = False  # Track if hit during this shot
 
     def shoot(self, start_pos, target_pos):
-        global combo_hits
         # Aim from player to mouse (world coords)
         dx = target_pos[0] - start_pos[0]
         dy = target_pos[1] - start_pos[1]
@@ -108,8 +131,7 @@ class MushroomBall:
         self.pos = start_pos[:]
         self.active = True
         self.stopped = False
-        combo_hits = 0  # Reset combo for new shot
-        print("Mushroom shot! Check minimap for goals.")
+        self.hit_this_shot = False
 
     def update(self):
         if not self.active:
@@ -161,57 +183,68 @@ class MushroomBall:
         self.vel = [0.0, 0.0]
         self.active = False
         self.stopped = True
+        self.hit_this_shot = False
 
-# Goals (random glowing pods with pulse, spawned near start)
+# Goals (scattered across map, safe from collisions, only y > 4215)
 goals = []
 goal_timer = 0  # For pulsing
 def generate_goals():
     global goals
     goals = []
     attempts = 0
-    # Spawn near player start for visibility (within VISIBLE_RADIUS)
-    min_x = max(100, int(player_pos[0] - VISIBLE_RADIUS))
-    max_x = min(WORLD_WIDTH - 100, int(player_pos[0] + VISIBLE_RADIUS))
-    min_y = max(100, int(player_pos[1] - VISIBLE_RADIUS))
-    max_y = min(WORLD_HEIGHT - 100, int(player_pos[1] + VISIBLE_RADIUS))
-    print(f"Searching safe spots in visible area: [{min_x}-{max_x}, {min_y}-{max_y}]")
-    
-    while len(goals) < NUM_GOALS and attempts < 300:  # Even more attempts
-        goal_x = random.randint(min_x, max_x)
-        goal_y = random.randint(min_y, max_y)
+    # Scatter across full map, but safe from red AND only below y=4215 (y > FORBIDDEN_Y_MAX, since higher y = above)
+    min_y = FORBIDDEN_Y_MAX + 1  # Start just below the line
+    while len(goals) < NUM_GOALS and attempts < 500:  # Broad search
+        goal_x = random.randint(100, WORLD_WIDTH - 100)
+        goal_y = random.randint(min_y, WORLD_HEIGHT - 100)
         if not check_collision(goal_x, goal_y, GOAL_RADIUS):
             goals.append([goal_x, goal_y])
-            print(f"Added goal at ({goal_x}, {goal_y})")
         attempts += 1
-    if len(goals) < NUM_GOALS:
-        print(f"Only found {len(goals)} safe spots—increase VISIBLE_RADIUS or reduce NUM_GOALS.")
-    else:
-        print(f"Generated {len(goals)} visible goals near start: {goals}")
 
 def check_goal_hit(ball_pos, ball_radius):
-    global score, combo_hits
-    hit_any = False
+    global score, streak
+    hits_this_shot = 0
+    hit_goals = []  # Track for multi-hit
     for i in range(len(goals)-1, -1, -1):  # Reverse to avoid index shift
         goal = goals[i]
         dx = ball_pos[0] - goal[0]
         dy = ball_pos[1] - goal[1]
         dist = math.sqrt(dx**2 + dy**2)
         if dist < GOAL_RADIUS + ball_radius:
-            print(f"Goal {i+1} hit!")
+            hit_goals.append(goals[i])
+            hits_this_shot += 1
+            del goals[i]
             # Particle burst at goal
             for _ in range(PARTICLE_COUNT):
                 p = SporeParticle(goal[0], goal[1])
                 particles.add(p)
-            del goals[i]
-            combo_hits += 1
-            hit_any = True
-            score += BASE_SCORE
-    if hit_any and combo_hits >= 2:
-        score += BONUS_SCORE  # Bonus for 2+ in one shot
-        print(f"Combo bonus! +{BONUS_SCORE} for {combo_hits} hits.")
-    return hit_any
+    if hits_this_shot > 0:
+        # Scoring: give extra reward for multi-goal strikes.
+        # Use an exponential combo so multi-hit strikes are worth noticeably more.
+        # For n hits: points = BASE_SCORE * n * (COMBO_MULTIPLIER ** (n-1))
+        # This makes 1 hit -> BASE_SCORE, 2 hits -> BASE_SCORE*2*COMBO, 3 hits -> BASE_SCORE*3*COMBO^2, etc.
+        # Scoring rules:
+        # - Single hit: award BASE_SCORE; if there is an active streak, double that single-hit (COMBO_MULTIPLIER).
+        # - Multi-hit in a single strike: multiply the total (BASE_SCORE * hits) by COMBO_MULTIPLIER.
+        if hits_this_shot == 1:
+            if streak > 0:
+                points = int(BASE_SCORE * COMBO_MULTIPLIER)
+            else:
+                points = BASE_SCORE
+        else:
+            # Two goals in one strike: e.g. BASE_SCORE*2*COMBO -> 10*2*2 = 40
+            points = int(BASE_SCORE * hits_this_shot * COMBO_MULTIPLIER)
+        score += points
+        streak += hits_this_shot  # Build streak on hit(s)
+        mushroom_ball.hit_this_shot = True
+        # Pop-up at ball pos (average if multi)
+        avg_x = ball_pos[0]
+        avg_y = ball_pos[1]
+        popups.append(ScorePopup(avg_x, avg_y, points))
+        return True
+    return False
 
-# Ball instance
+# Ball instance (starts at (730, 8230))
 mushroom_ball = MushroomBall()
 
 def update_camera():
@@ -237,10 +270,10 @@ def update_camera():
     cam_y = max(0, min(cam_y, WORLD_HEIGHT - SCREEN_HEIGHT))
 
 def draw_minimap(screen):
-    """Draw small minimap in top-right showing scaled real map + icons."""
+    """Draw small minimap in top-right showing scaled real map + elements."""
     minimap = pygame.Surface(MINIMAP_SIZE)
     
-    # Mini real map: Scale down the full map image
+    # Mini size real map: Scale full map to minimap size
     scaled_map = pygame.transform.scale(map_image, MINIMAP_SIZE)
     minimap.blit(scaled_map, (0, 0))
     
@@ -254,7 +287,7 @@ def draw_minimap(screen):
     player_map_y = int(player_pos[1] * scale_y)
     pygame.draw.circle(minimap, (0, 0, 255), (player_map_x, player_map_y), 3)
     
-    # Goals (green dots)
+    # Goals (green dots, larger if remaining)
     for goal in goals:
         goal_map_x = int(goal[0] * scale_x)
         goal_map_y = int(goal[1] * scale_y)
@@ -309,15 +342,13 @@ def check_collision(world_x, world_y, radius):
 
 # Ensure starting position is safe (move if on wall)
 if check_collision(player_pos[0], player_pos[1], player_radius):
-    print("Starting pos on wall! Moving to safe spot...")
     player_pos[0] = 50.0
     player_pos[1] = 50.0
     while check_collision(player_pos[0], player_pos[1], player_radius) and player_pos[0] < WORLD_WIDTH - 100:
         player_pos[0] += 50
         player_pos[1] += 50
-    print(f"New start: {player_pos}")
 
-# Generate goals NEAR START for visibility (before user moves)
+# Generate goals SCATTERED ACROSS MAP (before user moves, only y > 4215)
 generate_goals()
 
 update_camera()  # Initial cam
@@ -340,6 +371,8 @@ while running:
                 mouse_world_pos[1] = mouse_screen[1] + cam_y
                 mushroom_ball.shoot(player_pos, mouse_world_pos)
             if event.key == pygame.K_r:  # Reset ball manually
+                if not mushroom_ball.hit_this_shot:
+                    streak = 0
                 mushroom_ball.reset(player_pos)
         # Optional: Zoom with mouse wheel (basic)
         if event.type == pygame.MOUSEWHEEL:
@@ -369,25 +402,31 @@ while running:
         new_x = max(player_radius, min(new_x, WORLD_WIDTH - player_radius))
         new_y = max(player_radius, min(new_y, WORLD_HEIGHT - player_radius))
 
-        # Test collision at new world position
+        # Test collision at new world position (silent)
         if check_collision(new_x, new_y, player_radius):
-            print("Hit wall! Cannot move there.")   
+            pass  # Silent wall hit
         else:
             player_pos[0] = new_x
             player_pos[1] = new_y
 
         # Update ball
         mushroom_ball.update()
+        hit_during_shot = False
         if mushroom_ball.active and not level_complete:
             if check_goal_hit(mushroom_ball.pos, mushroom_ball.radius):
+                hit_during_shot = True
                 if len(goals) == 0:
                     level_complete = True
-                    print("All goals hit! Level complete!")
             if mushroom_ball.stopped:
+                if not mushroom_ball.hit_this_shot:
+                    streak = 0
                 mushroom_ball.reset(player_pos)  # Auto-reset after stop
 
         # Update particles
         particles.update()
+
+        # Update pop-ups
+        popups = [p for p in popups if p.update()]
 
     # Update camera to follow player/ball
     update_camera()
@@ -420,6 +459,10 @@ while running:
     # Draw mushroom ball
     mushroom_ball.draw(screen, cam_x, cam_y)
 
+    # Draw score pop-ups
+    for popup in popups:
+        popup.draw(screen, cam_x, cam_y)
+
     # Aim line (from player to mouse, if not shooting)
     if mushroom_ball.stopped and not level_complete:
         mouse_screen = pygame.mouse.get_pos()
@@ -430,10 +473,10 @@ while running:
         end_screen = (mouse_screen[0], mouse_screen[1])
         pygame.draw.line(screen, (255, 255, 0), start_screen, end_screen, 2)
 
-    # Draw minimap (now with real scaled map)
+    # Draw minimap with real map texture
     draw_minimap(screen)
 
-    # Info/UI with score
+    # Info/UI with score (don't display the word 'Streak' at the top; streak counter still used internally)
     info = font.render(f"Pos: ({int(player_pos[0])}, {int(player_pos[1])}) | Score: {score} | Goals left: {len(goals)} | SPACE to shoot! R to reset", True, (255, 255, 255))
     screen.blit(info, (10, 10))
     if level_complete:
