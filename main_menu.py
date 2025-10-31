@@ -10,11 +10,11 @@ from random import uniform, randint
 # -------------------------
 # Configuration
 # -------------------------
-BG_PATH = r"C:\\Users\\Xdimt\\Downloads\\background.img.png"  # user-specified
+BG_PATH = r"assets/images/background.img.png"  # user-specified
 FONT_PATH = os.path.join("assets", "fonts", "skooled_serif.ttf")  # optional
-HOVER_SFX = os.path.join("assets", "sounds", "button_hover.wav")
-CLICK_SFX = os.path.join("assets", "sounds", "button_click.wav")
-MUSIC_PATH = os.path.join("assets", "music", "menu_bgm.mp3")
+HOVER_SFX = r"assets/sounds/Hover.mp3"
+CLICK_SFX = r"assets/sounds/Click.mp3"
+MUSIC_PATH = r"assets/sounds/Background_music.mp3"  # optional
 
 SCREEN_WIDTH = 1280
 SCREEN_HEIGHT = 720
@@ -348,7 +348,7 @@ def render_menu(dt, mouse_pos):
     for i, t in enumerate(stats):
         screen.blit(small_font.render(t, True, STATS_COLOR), (48, 220 + i*28))
     for b in main_buttons: b.draw(screen)
-    footer = small_font.render("Developed by Rowaida", True, WHITE)
+    footer = small_font.render("Developed by G23", True, WHITE)
     screen.blit(footer, footer.get_rect(center=(SCREEN_WIDTH//2, SCREEN_HEIGHT-28)))
 
 def render_options(dt, mouse_pos):
@@ -360,7 +360,7 @@ def render_options(dt, mouse_pos):
     for s in spores: s.draw(screen)
     draw_centered_title(screen, "OPTIONS", title_font, (210,240,210), DARK_MOSS_OUTLINE, SCREEN_WIDTH//2, 140)
     for b in opt_buttons: b.draw(screen)
-    footer = small_font.render("Developed by Rowaida", True, WHITE)
+    footer = small_font.render("Developed by G23", True, WHITE)
     screen.blit(footer, footer.get_rect(center=(SCREEN_WIDTH//2, SCREEN_HEIGHT-28)))
 
 def render_marketplace(dt, mouse_pos):

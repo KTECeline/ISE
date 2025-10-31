@@ -1,0 +1,10 @@
+{
+    "score": 0,
+    "lives": 3,
+    "mushrooms": 0,
+    "current_level": 1,
+    "inventory": {},
+    "unlocked_levels": [
+        1
+    ]
+}

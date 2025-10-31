@@ -12,10 +12,10 @@ pygame.display.set_caption("Character Movement Demo")
 background_color = (135, 206, 250)  # light blue background
 
 # Load sprite sheets
-standing_image = pygame.image.load("ISE\character\chaStanding.png").convert_alpha()
-walking_sheet = pygame.image.load("ISE\character\chaWalk.png").convert_alpha()
-down_sheet = pygame.image.load("ISE\character\chadown.png").convert_alpha()
-jump_sheet = pygame.image.load("ISE\character\chajump.png").convert_alpha()
+standing_image = pygame.image.load("character/chaStanding.png").convert_alpha()
+walking_sheet = pygame.image.load("character/chaWalk.png").convert_alpha()
+down_sheet = pygame.image.load("character/chadown.png").convert_alpha()
+jump_sheet = pygame.image.load("character/chajump.png").convert_alpha()
 
 # --- Extract frames ---
 num_walking_frames = 7
