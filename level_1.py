@@ -1,8 +1,41 @@
 from ursina import *
+import numpy as np
+from PIL import Image
 
 app = Ursina()
 # Remove the internal exit button
 window.exit_button.enabled = False
+
+# Load and process mushroom coins with different colors
+mushroom_sheet = Image.open('assets/images/mushroom_coins.png')
+sheet_width, sheet_height = mushroom_sheet.size
+
+# Create color variations
+color_filters = {
+    'original': (1, 1, 1),  # No tint
+    'red': (1, 0.2, 0.2),   # Red tint
+    'green': (0.2, 1, 0.2), # Green tint
+    'blue': (0.2, 0.2, 1)   # Blue tint
+}
+
+# Store the textures with different colors
+mushroom_textures = {}
+for color_name, color_filter in color_filters.items():
+    # Apply color filter to the image
+    colored_image = mushroom_sheet.copy()
+    # Convert to RGBA if not already
+    if colored_image.mode != 'RGBA':
+        colored_image = colored_image.convert('RGBA')
+    
+    # Apply color tint
+    data = np.array(colored_image)
+    data[..., 0] = data[..., 0] * color_filter[0]  # Red channel
+    data[..., 1] = data[..., 1] * color_filter[1]  # Green channel
+    data[..., 2] = data[..., 2] * color_filter[2]  # Blue channel
+    
+    # Convert back to Image and create texture
+    colored_image = Image.fromarray(data)
+    mushroom_textures[color_name] = Texture(colored_image)
 
 # Create a visual ground plane with the main image
 ground = Entity(
@@ -39,6 +72,34 @@ player = Entity(
     collider='sphere'
 )
 
+# Position adjustment values
+x_offset = 35.5  # Decrease to move right, increase to move left
+z_offset = 9.8    # Decrease to move up, increase to move down
+
+# Create an animated red mushroom coin
+red_coin = Entity(
+    model='quad',
+    texture=mushroom_textures['red'],
+    texture_scale=(1/5, 1),      # Show 1/5th of the texture
+    texture_offset=(0, 0),       # Start with first frame
+    scale=(1, 1),
+    position=(592/81 - x_offset, 1, 1568/75 - z_offset),
+    rotation_x=90                # Face down for top view
+)
+
+# Animation variables for the coin
+red_coin.frame = 0
+red_coin.animation_time = 0
+red_coin.frame_duration = 0.2    # Time per frame in seconds
+
+def update_coin_animation():
+    red_coin.animation_time += time.dt
+    if red_coin.animation_time >= red_coin.frame_duration:
+        # Move to next frame
+        red_coin.frame = (red_coin.frame + 1) % 5
+        red_coin.texture_offset = (red_coin.frame/5, 0)
+        red_coin.animation_time = 0
+
 # Create camera positioned above the player for top-down view
 camera.position = (0, 50, 0)
 camera.rotation_x = 90
@@ -70,6 +131,9 @@ zoom_indicator = Text(
 )
 
 def update():
+    # Update coin animation
+    update_coin_animation()
+    
     # WASD movement for player
     move_direction = Vec3(0, 0, 0)
     
