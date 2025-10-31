@@ -4,6 +4,7 @@ import json
 import random
 import math  # For sin easing
 from PIL import Image, ImageFilter  # pip install pillow
+from charactermove import load_assets, Player
 
 # Constants
 SCREEN_WIDTH = 800
@@ -51,34 +52,6 @@ class Particle(pygame.sprite.Sprite):
         if self.lifetime <= 0 or self.rect.y > SCREEN_HEIGHT:
             self.kill()
 
-# PlayerWalker (no arg in update for group compat, but we won't add to group)
-class PlayerWalker(pygame.sprite.Sprite):
-    def __init__(self):
-        super().__init__()
-        try:
-            sheet = pygame.image.load('assets/images/player_walk.png').convert_alpha()  # 128x128 sheet, 4x32px frames
-            self.frames = [sheet.subsurface((i*32, 0, 32, 128)) for i in range(4)]
-            self.current_frame = 0
-        except FileNotFoundError:
-            self.frames = [pygame.Surface((32, 64))] * 4
-            self.frames[0].fill((150, 100, 50))  # Brown mushroom fallback
-        self.image = self.frames[0]
-        self.rect = self.image.get_rect(center=(-50, SCREEN_HEIGHT - 100))
-        self.walk_timer = 0
-
-    def update(self, walk_progress=None):
-        if walk_progress is not None:
-            # Only use progress if provided (explicit call)
-            self.rect.x = -50 + (SCREEN_WIDTH // 2 + 50) * walk_progress
-            # Sin easing for bouncy walk
-            bounce = math.sin(walk_progress * math.pi) * 5
-            self.rect.y = (SCREEN_HEIGHT - 100) + bounce
-        # Animate always
-        self.walk_timer += 1
-        if self.walk_timer % 10 == 0:
-            self.current_frame = (self.current_frame + 1) % 4
-            self.image = self.frames[self.current_frame]
-
 # Marketplace
 class Marketplace:
     def __init__(self, spore_points=300):
@@ -105,13 +78,40 @@ class Marketplace:
             self.store_bg = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT))
             self.store_bg.fill((30, 50, 20))
         
-        # Power-ups
+        # Power-ups (use images from assets/characters)
         self.items = {
-            'elastic_ball': {'cost': 100, 'desc': 'Bouncier sporeball!', 'effect': 'particles', 'tooltip': 'Higher bounces in Gauntlet!'},
-            'blur_dash': {'cost': 150, 'desc': 'Speed blur reveal!', 'effect': 'blurring', 'tooltip': 'Uncover hidden spores on dash.'},
-            'mycelium_smoker': {'cost': 120, 'desc': 'Smoke-obscuring pits!', 'effect': 'smoke', 'tooltip': 'Slow down defenders with haze.'},
-            'glow_aura': {'cost': 80, 'desc': 'Pulsing light aura!', 'effect': 'gradient', 'tooltip': 'Light up dark paths.'},
-            'venom_trail': {'cost': 200, 'desc': 'Slippery kick trails!', 'effect': 'texture', 'tooltip': 'Make hazards slip away.'}
+            'velocity_vial': {
+                'cost': 120,
+                'name': 'Velocity Vial',
+                'desc': 'Speed boost for fast flings.',
+                'effect': 'particles',
+                'tooltip': 'Speed boost for fling-heavy play.',
+                'img': 'speed1.png'
+            },
+            'golden_gleam': {
+                'cost': 150,
+                'name': 'Golden Gleam',
+                'desc': 'Double score.',
+                'effect': 'blurring',
+                'tooltip': 'Double score on combo strikes.',
+                'img': 'gold1.png'
+            },
+            'cluster_cap': {
+                'cost': 130,
+                'name': 'Cluster Cap',
+                'desc': 'Spawns nearby goals.',
+                'effect': 'smoke',
+                'tooltip': 'Spawns nearby friendly goals on use.',
+                'img': 'magnet1.png'
+            },
+            'aura_alembic': {
+                'cost': 140,
+                'name': 'Aura Alembic',
+                'desc': 'Auto-hit goals on touch.',
+                'effect': 'gradient',
+                'tooltip': 'Auto-hit goals on touch for a short time.',
+                'img': 'circle1.png'
+            },
         }
         
         # UI
@@ -120,19 +120,75 @@ class Marketplace:
         self.start_button = pygame.Rect(300, 500, 200, 50)
         self.preview_surf = pygame.Surface((200, 150))
         self.item_rects = {}
-        self.player = PlayerWalker()  # Not added to particles!
+        # Ensure character assets are loaded (requires a video mode)
+        try:
+            load_assets()
+        except Exception:
+            # If asset loading fails, player will still be created with placeholders
+            pass
+        # Instantiate the character (midbottom pos). Not added to particles.
+        self.player = Player(pos=(-50, SCREEN_HEIGHT - 100))
         self.setup_item_rects()
+        # Load item images (after rects are known so we can size them)
+        self.item_images = {}
+        self.load_item_images()
         
         # Initial ambient
         for _ in range(15):
             self.particles.add(Particle(random.randint(0, SCREEN_WIDTH), random.randint(0, SCREEN_HEIGHT), pygame.Vector2(0, 0)))
 
     def setup_item_rects(self):
-        y_offset = 100
-        for i, item_key in enumerate(self.items):
-            x = (i % 3) * 250 + 50
-            y = (i // 3) * 150 + y_offset
-            self.item_rects[item_key] = pygame.Rect(x, y, 200, 120)
+        # Improved layout with better spacing and organization
+        item_w, item_h = 180, 140  # Slightly smaller for better fit
+        y_offset = 120  # More space at top
+        
+        keys = list(self.items.keys())
+        count = len(keys)
+        
+        # Always use 2 columns for better visual organization
+        cols = 2
+        rows = (count + 1) // 2  # Round up for odd numbers
+        
+        h_spacing = 40
+        v_spacing = 30
+        total_w = cols * item_w + (cols - 1) * h_spacing
+        start_x = (SCREEN_WIDTH - total_w) // 2
+        
+        for idx, item_key in enumerate(keys):
+            col = idx % cols
+            row = idx // cols
+            x = start_x + col * (item_w + h_spacing)
+            y = y_offset + row * (item_h + v_spacing)
+            self.item_rects[item_key] = pygame.Rect(x, y, item_w, item_h)
+
+    def load_item_images(self):
+        """Load and scale item images from assets/characters based on the item rect sizes."""
+        for key, info in self.items.items():
+            img_name = info.get('img')
+            if not img_name:
+                continue
+            img_path = f"assets/characters/{img_name}"
+            try:
+                surf = pygame.image.load(img_path).convert_alpha()
+                # Scale to fit nicely within the card
+                rect = self.item_rects.get(key)
+                if rect:
+                    max_w = int(rect.width * 0.7)  # Slightly larger for better visibility
+                    max_h = int(rect.height * 0.5)
+                    w, h = surf.get_size()
+                    # compute scale factor that fits within max_w x max_h
+                    scale = min(max_w / w, max_h / h)
+                    scale = min(scale, 1.0)  # Avoid upscaling
+                    new_w = max(1, int(w * scale))
+                    new_h = max(1, int(h * scale))
+                    if (new_w, new_h) != (w, h):
+                        surf = pygame.transform.smoothscale(surf, (new_w, new_h))
+                self.item_images[key] = surf
+            except Exception:
+                # Fallback: colored surface with the item name
+                fallback = pygame.Surface((100, 60), pygame.SRCALPHA)
+                fallback.fill((120, 120, 120, 180))
+                self.item_images[key] = fallback
 
     def handle_events(self, event):
         if event.type == pygame.MOUSEMOTION and self.state == 'store':
@@ -150,7 +206,6 @@ class Marketplace:
                 for item_key, rect in self.item_rects.items():
                     if rect.collidepoint(mouse_pos) and item_key not in self.inventory:
                         self.selected_item = item_key
-                        self.transition('preview')
                         self.preview_timer = 60
                         return
                 if self.start_button.collidepoint(mouse_pos):
@@ -164,7 +219,7 @@ class Marketplace:
                         self.points -= item['cost']
                         self.inventory[self.selected_item] = True
                         save_inventory(self.inventory)
-                        self.transition('store')
+                        self.state = 'store'  # Go back to store without transition
                         print(f"Equipped {self.selected_item}! Points: {self.points}")
 
     def transition(self, new_state):
@@ -182,8 +237,14 @@ class Marketplace:
                 for _ in range(5):
                     self.particles.add(Particle(self.player.rect.centerx, self.player.rect.y, pygame.Vector2(0, -1), (255, 255, 0)))
                 self.transition('entry')
-            # Update player explicitly (no group arg issue)
-            self.player.update(self.walk_progress)
+            # Update player using its update(walk_progress, screen_width) API so it animates
+            try:
+                self.player.update(self.walk_progress, SCREEN_WIDTH)
+            except Exception:
+                # Fallback: position manually if update fails
+                new_x = -50 + (SCREEN_WIDTH // 2 + 50) * self.walk_progress
+                bounce = math.sin(self.walk_progress * math.pi) * 5
+                self.player.rect.midbottom = (int(new_x), SCREEN_HEIGHT - 100 + int(bounce))
             # Footstep trails
             if int(self.walk_progress * WALK_DURATION) % 20 == 0:
                 self.particles.add(Particle(self.player.rect.centerx, self.player.rect.bottom, pygame.Vector2(0, 2), (150, 100, 50)))
@@ -200,7 +261,7 @@ class Marketplace:
                 self.fade_alpha = 0
                 self.fade_dir = 0
         
-        # Preview
+        # Preview timer
         if self.state == 'preview' and self.preview_timer > 0:
             self.preview_timer -= 1
             if self.preview_timer % 5 == 0 and self.items[self.selected_item]['effect'] == 'particles':
@@ -208,11 +269,15 @@ class Marketplace:
                     vel = pygame.Vector2(random.uniform(-2, 2), random.uniform(-3, 0))
                     self.particles.add(Particle(400, 275, vel))  # Preview offset
             if self.preview_timer == 0:
-                self.transition('store')
+                self.state = 'store'  # Simply go back to store
 
     def draw(self, screen):
-        # BG
-        bg = self.market_bg if self.state in ['walking_in', 'entry', 'preview'] else self.store_bg
+        # Use marketplace background for all states except store
+        if self.state == 'store':
+            bg = self.store_bg
+        else:
+            bg = self.market_bg
+            
         screen.blit(bg, (0, 0))
         
         # Player during walk
@@ -246,83 +311,147 @@ class Marketplace:
         elif self.state == 'store':
             points_text = font.render(f"Spore Points: {self.points}", True, (255, 255, 0))
             screen.blit(points_text, (50, 50))
+            
+            # Draw items in a clean, organized layout
             for item_key, data in self.items.items():
                 rect = self.item_rects[item_key]
-                scale_factor = 1.1 if item_key == self.hovered_item else 1.0
-                if scale_factor > 1:
-                    glow_surf = pygame.Surface((int(rect.width * 1.2), int(rect.height * 1.2)))
-                    glow_surf.fill((0, 255, 100, 100))
-                    glow_rect = glow_surf.get_rect(center=rect.center)
-                    screen.blit(glow_surf, glow_rect)
-                card_surf = pygame.Surface((int(rect.width * scale_factor), int(rect.height * scale_factor)))
-                card_surf.fill((50, 50, 50))
-                scaled_rect = card_surf.get_rect(center=rect.center)
-                screen.blit(card_surf, scaled_rect)
-                pygame.draw.rect(screen, (100, 100, 100), rect, 2)
-                pygame.draw.circle(screen, (0, 255, 0), rect.center, 20)
+                
+                # Draw card background
+                card_color = (80, 60, 40)  # Nice earthy tone for mushrooms
+                if item_key == self.hovered_item:
+                    card_color = (100, 80, 60)  # Lighter when hovered
+                
+                pygame.draw.rect(screen, card_color, rect)
+                pygame.draw.rect(screen, (120, 100, 80), rect, 2)  # Border
+                
+                # Draw item image centered at top of card
+                img = self.item_images.get(item_key)
+                if img:
+                    img_rect = img.get_rect(center=(rect.centerx, rect.y + 40))
+                    screen.blit(img, img_rect)
+                
+                # Item name
+                name_text = font.render(data.get('name', item_key), True, (255, 215, 0))
+                name_rect = name_text.get_rect(center=(rect.centerx, rect.y + 75))
+                screen.blit(name_text, name_rect)
+                
+                # Description
                 desc_text = font.render(data['desc'], True, (255, 255, 255))
-                screen.blit(desc_text, (rect.x, rect.y + 30))
-                cost_text = font.render(f"{data['cost']} pts", True, (0, 255, 0) if self.points >= data['cost'] else (255, 0, 0))
-                screen.blit(cost_text, (rect.x, rect.y + 50))
+                desc_rect = desc_text.get_rect(center=(rect.centerx, rect.y + 95))
+                screen.blit(desc_text, desc_rect)
+                
+                # Cost
+                cost_color = (0, 255, 0) if self.points >= data['cost'] else (255, 0, 0)
+                cost_text = font.render(f"{data['cost']} pts", True, cost_color)
+                cost_rect = cost_text.get_rect(center=(rect.centerx, rect.y + 115))
+                screen.blit(cost_text, cost_rect)
+                
+                # Owned indicator
                 if item_key in self.inventory:
-                    owned_text = font.render("[EQUIPPED]", True, (0, 255, 0))
-                    screen.blit(owned_text, (rect.x, rect.y + 70))
-            pygame.draw.rect(screen, (0, 255, 0), self.start_button)
+                    owned_text = font.render("EQUIPPED", True, (0, 255, 0))
+                    owned_rect = owned_text.get_rect(center=(rect.centerx, rect.y + 20))
+                    screen.blit(owned_text, owned_rect)
+            
+            # Start button
+            pygame.draw.rect(screen, (0, 200, 0), self.start_button)
             screen.blit(font.render("Start Gauntlet", True, (0, 0, 0)), (320, 510))
+            
+            # Tooltip
             if self.hovered_item:
                 tooltip = self.items[self.hovered_item]['tooltip']
-                tt_surf = pygame.Surface((200, 30))
+                tt_surf = pygame.Surface((300, 40))
                 tt_surf.fill((0, 0, 0, 200))
                 tt_text = font.render(tooltip, True, (255, 255, 255))
-                tt_surf.blit(tt_text, (5, 5))
-                tt_rect = tt_surf.get_rect(center=(SCREEN_WIDTH // 2, SCREEN_HEIGHT - 50))
-                screen.blit(tt_surf, tt_rect)
+                tt_rect = tt_text.get_rect(center=(tt_surf.get_width()//2, tt_surf.get_height()//2))
+                tt_surf.blit(tt_text, tt_rect)
+                screen.blit(tt_surf, (SCREEN_WIDTH//2 - 150, SCREEN_HEIGHT - 50))
+                
         elif self.state == 'preview':
-            # Redraw store basics
+            # Keep the marketplace background for preview
             points_text = font.render(f"Spore Points: {self.points}", True, (255, 255, 0))
             screen.blit(points_text, (50, 50))
-            pygame.draw.rect(screen, (0, 255, 0), self.start_button)
-            screen.blit(font.render("Start Gauntlet", True, (0, 0, 0)), (320, 510))
-            # Selected item highlight
-            if self.selected_item:
-                sel_rect = self.item_rects[self.selected_item]
-                pygame.draw.rect(screen, (150, 150, 150), sel_rect, 2)
-                item = self.items[self.selected_item]
-                screen.blit(font.render(f"{item['desc']} - Preview", True, (255, 255, 255)), (sel_rect.x, sel_rect.y))
+            
+            # Semi-transparent overlay
+            overlay = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
+            overlay.fill((0, 0, 0, 128))
+            screen.blit(overlay, (0, 0))
+            
             # Preview window
-            pygame.draw.rect(screen, (0, 0, 0), (300, 200, 200, 150), 2)
-            self.preview_surf.fill((50, 20, 10))
+            preview_rect = pygame.Rect(200, 150, 400, 300)
+            pygame.draw.rect(screen, (60, 40, 20), preview_rect)
+            pygame.draw.rect(screen, (120, 100, 80), preview_rect, 3)
+            
             if self.selected_item:
-                self.render_preview(self.items[self.selected_item]['effect'])
-            screen.blit(self.preview_surf, (300, 200))
-            pygame.draw.rect(screen, (0, 255, 0), self.buy_button)
-            screen.blit(font.render("Buy", True, (0, 0, 0)), (610, 510))
+                item = self.items[self.selected_item]
+                
+                # Item name
+                name_text = big_font.render(item['name'], True, (255, 215, 0))
+                screen.blit(name_text, (preview_rect.centerx - name_text.get_width()//2, preview_rect.y + 20))
+                
+                # Item image
+                img = self.item_images.get(self.selected_item)
+                if img:
+                    img_rect = img.get_rect(center=(preview_rect.centerx, preview_rect.y + 100))
+                    screen.blit(img, img_rect)
+                
+                # Description
+                desc_text = font.render(item['desc'], True, (255, 255, 255))
+                screen.blit(desc_text, (preview_rect.centerx - desc_text.get_width()//2, preview_rect.y + 150))
+                
+                # Tooltip
+                tooltip_text = font.render(item['tooltip'], True, (200, 200, 200))
+                screen.blit(tooltip_text, (preview_rect.centerx - tooltip_text.get_width()//2, preview_rect.y + 180))
+                
+                # Cost
+                cost_text = font.render(f"Cost: {item['cost']} points", True, (255, 255, 0))
+                screen.blit(cost_text, (preview_rect.centerx - cost_text.get_width()//2, preview_rect.y + 210))
+                
+                # Buy button (only show if not owned and can afford)
+                if self.selected_item not in self.inventory:
+                    buy_color = (0, 200, 0) if self.points >= item['cost'] else (100, 100, 100)
+                    pygame.draw.rect(screen, buy_color, self.buy_button)
+                    screen.blit(font.render("Buy", True, (0, 0, 0)), (610, 510))
+                
+                # Effect preview in a small area
+                effect_rect = pygame.Rect(preview_rect.centerx - 50, preview_rect.y + 240, 100, 40)
+                pygame.draw.rect(screen, (40, 30, 20), effect_rect)
+                effect_text = font.render("Effect Preview", True, (200, 200, 200))
+                screen.blit(effect_text, (effect_rect.centerx - effect_text.get_width()//2, effect_rect.centery - effect_text.get_height()//2))
+                
+                # Show the actual effect
+                self.render_preview(item['effect'], preview_rect.centerx, preview_rect.y + 260)
+            
+            # Close preview hint
+            hint_text = font.render("Click anywhere to close", True, (200, 200, 200))
+            screen.blit(hint_text, (SCREEN_WIDTH//2 - hint_text.get_width()//2, preview_rect.bottom + 20))
 
-    def render_preview(self, effect_type):
+    def render_preview(self, effect_type, x, y):
+        # Draw effect preview at specified position
         if effect_type == 'particles':
-            pygame.draw.rect(self.preview_surf, (100, 50, 20), (50, 120, 100, 20))  # Bumper
-            pygame.draw.circle(self.preview_surf, (255, 255, 0), (100, 100), 10)  # Ball
+            pygame.draw.circle(screen, (255, 255, 0), (x, y), 8)
+            for i in range(3):
+                offset = (self.preview_timer // 5 + i * 3) % 10
+                pygame.draw.circle(screen, (255, 200, 0), (x + offset, y - offset), 4)
         elif effect_type == 'blurring':
-            temp_surf = pygame.Surface((50, 50))
-            temp_surf.fill((255, 0, 0))
-            pil_img = Image.frombytes('RGB', temp_surf.get_size(), pygame.image.tostring(temp_surf, 'RGB'))
-            blurred = pil_img.filter(ImageFilter.GaussianBlur(2))
-            blurred_surf = pygame.image.fromstring(blurred.tobytes(), blurred.size, 'RGB')
-            self.preview_surf.blit(blurred_surf, (75, 50))
-            pygame.draw.circle(self.preview_surf, (0, 0, 255), (100, 75), 5)
+            pygame.draw.circle(screen, (255, 215, 0), (x, y), 10)
+            for r in range(12, 20, 2):
+                alpha = 100 - (r - 12) * 10
+                temp_surf = pygame.Surface((r*2, r*2), pygame.SRCALPHA)
+                pygame.draw.circle(temp_surf, (255, 215, 0, alpha), (r, r), r)
+                screen.blit(temp_surf, (x - r, y - r))
         elif effect_type == 'smoke':
-            for i in range(5):
-                alpha_surf = pygame.Surface((20, 10), pygame.SRCALPHA)
-                alpha_surf.fill((100, 100, 100, 50))
-                self.preview_surf.blit(alpha_surf, (80 + i*5, 100 - i*10))
+            for i in range(3):
+                size = 5 + i * 2
+                alpha = 150 - i * 50
+                offset = math.sin(self.preview_timer / 10 + i) * 5
+                temp_surf = pygame.Surface((size*2, size), pygame.SRCALPHA)
+                pygame.draw.ellipse(temp_surf, (200, 200, 200, alpha), (0, 0, size*2, size))
+                screen.blit(temp_surf, (x - size + offset, y - size//2))
         elif effect_type == 'gradient':
-            for r in range(0, 360, 30):
-                color = (random.randint(0, 255), random.randint(100, 255), random.randint(0, 100))
-                pygame.draw.circle(self.preview_surf, color, (100, 75), r//30 + 5, 2)
-        elif effect_type == 'texture':
-            trail_surf = pygame.Surface((100, 5))
-            trail_surf.fill((0, 255, 0))
-            self.preview_surf.blit(trail_surf, (50, 100))
+            for i in range(5):
+                radius = 5 + i * 3
+                color = (100 + i * 30, 150 + i * 20, 200)
+                pygame.draw.circle(screen, color, (x, y), radius, 1)
 
 # Main
 def main():
@@ -335,6 +464,10 @@ def main():
             next_state = marketplace.handle_events(event)
             if next_state == 'level2':
                 running = False
+            # Allow clicking anywhere to close preview
+            if event.type == pygame.MOUSEBUTTONDOWN and marketplace.state == 'preview':
+                marketplace.state = 'store'
+                
         marketplace.update()
         screen.fill((0, 0, 0))
         marketplace.draw(screen)
