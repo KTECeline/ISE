@@ -2,6 +2,7 @@ import pygame
 import sys
 import random
 import math
+from level2.goal import walking_frames_right, hit_frames_right
 
 # Initialize Pygame
 pygame.init()
@@ -33,6 +34,13 @@ BASE_SCORE = 10  # Points per hit
 COMBO_MULTIPLIER = 2  # Double score on streak/multi-hit (one strike gets two = x2 more marks)
 POPUP_LIFETIME = 60  # Frames for score pop-up fade
 FORBIDDEN_Y_MAX = 4215  # No goals above this y-line (higher y = above, so spawn y > 4215)
+MUSHROOM_ANIM_SCALE = 2.0  # Multiplier for animated mushroom frame size (1.0 = base ball size)
+FIREWORK_PARTICLE_COUNT = 28  # How many firework sparks to spawn per goal
+# Prefer strongly red fireworks so they stand out
+FIREWORK_COLORS = [(255, 40, 40), (255, 80, 60), (200, 30, 30), (255, 100, 80)]
+SCREEN_SHAKE_FRAMES = 12  # frames of camera shake when hit
+screen_shake_timer = 0
+SHOW_HIT_DEBUG = False  # This flag is no longer needed; removing it.
 
 # Paths to your files (update if needed)
 MAP_PATH = 'assets/textures/map/Level_2_map.png'
@@ -47,6 +55,29 @@ try:
     collision_surface = collision_surface.convert_alpha()
 except pygame.error as e:
     sys.exit(1)
+
+# Load goal animation frames from level2 (do this after a video mode is set)
+try:
+    import level2.goal as goal_module
+    try:
+        goal_module.load_assets()
+    except Exception as e:
+        print("Warning: failed to load level2 goal assets:", e)
+except Exception:
+    goal_module = None
+
+# Load ball animation frames from level2.hit
+try:
+    import level2.hit as hit_module
+    try:
+        hit_module.load_assets()
+        ball_frames = hit_module.ball_frames
+    except Exception as e:
+        print("Warning: failed to load level2 hit assets:", e)
+        ball_frames = []
+except Exception:
+    hit_module = None
+    ball_frames = []
 
 # Load sound effects (optional — game continues if missing)
 scored_sound = None
@@ -123,6 +154,54 @@ class SporeParticle(pygame.sprite.Sprite):
         if self.lifetime <= 0:
             self.kill()
 
+
+class FireworkParticle(pygame.sprite.Sprite):
+    """A bright firework-style spark that fades out."""
+    def __init__(self, x, y, color=None):
+        super().__init__()
+        # Make fireworks larger so they're visible
+        self.radius = random.randint(3, 6)
+        self.color = color if color is not None else random.choice(FIREWORK_COLORS)
+        size = max(8, self.radius * 3)
+        self.image = pygame.Surface((size, size), pygame.SRCALPHA)
+        # draw a filled circle plus a faint outer ring for glow
+        pygame.draw.circle(self.image, self.color + (255,), (size//2, size//2), self.radius)
+        try:
+            glow_color = (self.color[0], self.color[1], self.color[2], 80)
+            pygame.draw.circle(self.image, glow_color, (size//2, size//2), int(self.radius * 1.8))
+        except Exception:
+            pass
+        self.orig_image = self.image.copy()
+        # Rect stored in world coords (we'll offset when drawing)
+        self.rect = self.image.get_rect(center=(int(x), int(y)))
+        angle = random.uniform(0, 2 * math.pi)
+        speed = random.uniform(3.0, 9.0)
+        self.vel = [math.cos(angle) * speed, math.sin(angle) * speed]
+        # Longer lifetime for visibility
+        self.lifetime = random.randint(45, 90)
+        self.age = 0
+
+    def update(self):
+        self.age += 1
+        # Apply velocity and gravity-like pull
+        # Move in world coordinates
+        self.rect.x += self.vel[0]
+        self.rect.y += self.vel[1]
+        self.vel[1] += 0.08  # slight downward pull
+        # Fade out and shrink
+        if self.age >= self.lifetime:
+            self.kill()
+            return
+        alpha = int(255 * (1.0 - (self.age / self.lifetime)))
+        if alpha < 0:
+            alpha = 0
+        # Recreate image with new alpha to ensure blending
+        self.image = self.orig_image.copy()
+        try:
+            self.image.set_alpha(alpha)
+        except Exception:
+            pass
+
 particles = pygame.sprite.Group()
 
 # Mushroom Ball (sporeball, football-like but mushroom-themed)
@@ -134,6 +213,12 @@ class MushroomBall:
         self.active = False  # Not shot yet
         self.stopped = True  # For reset
         self.hit_this_shot = False  # Track if hit during this shot
+        # Animation frames (from level2.hit if available)
+        try:
+            self.frames = list(ball_frames) if ball_frames else []
+        except Exception:
+            self.frames = []
+        self.frame_index = 0.0
 
     def shoot(self, start_pos, target_pos):
         # Aim from player to mouse (world coords)
@@ -179,9 +264,26 @@ class MushroomBall:
     def draw(self, screen, cam_x, cam_y):
         if not self.active:
             return
-        # Mushroom look: Brown cap circle + white stem + random spores
         screen_x = int(self.pos[0] - cam_x)
         screen_y = int(self.pos[1] - cam_y)
+        # If frames are available from level2.hit, animate the mushroom ball using them
+        if self.frames:
+            try:
+                # Advance frame index and draw centered
+                self.frame_index = (self.frame_index + 0.4) % len(self.frames)
+                frame = self.frames[int(self.frame_index)]
+                # Scale frame to approximately ball size multiplied by MUSHROOM_ANIM_SCALE
+                base_size = int(self.radius * 2)
+                fw = max(1, int(base_size * MUSHROOM_ANIM_SCALE))
+                fh = max(1, int(base_size * MUSHROOM_ANIM_SCALE))
+                frame_s = pygame.transform.smoothscale(frame, (fw, fh))
+                rect = frame_s.get_rect(center=(screen_x, screen_y))
+                screen.blit(frame_s, rect)
+                return
+            except Exception:
+                # Fall back to primitive mushroom if animation fails
+                pass
+        # Fallback: Mushroom look: Brown cap circle + white stem + random spores
         # Cap
         pygame.draw.circle(screen, (139, 69, 19), (screen_x, screen_y - 5), self.radius)  # Brown cap
         # Stem
@@ -200,23 +302,101 @@ class MushroomBall:
         self.hit_this_shot = False
 
 # Goals (scattered across map, safe from collisions, only y > 4215)
-goals = []
-goal_timer = 0  # For pulsing
+goals = []  # list of [x,y] coordinates (world)
+goal_timer = 0  # for any legacy timers
+# Sprite-based visual goals
+goal_sprites = pygame.sprite.Group()
+goal_sprite_map = {}  # (x,y) -> GoalSprite
+
+HIT_DISPLAY_FRAMES = 120  # frames to show hit animation before removing visual (approx 2s at 60fps)
+SPRITE_SCALE = 1.8  # scale factor for goal sprites (1.0 = original size)
+
+class GoalSprite(pygame.sprite.Sprite):
+    def __init__(self, world_x, world_y, index=0):
+        super().__init__()
+        self.world_x = int(world_x)
+        self.world_y = int(world_y)
+        self.index = index
+        # Create scaled copies of frames so the sprite can be larger than source
+        self.walkingFrames = []
+        self.hitFrames = []
+        try:
+            for f in walking_frames_right:
+                nw = max(1, int(f.get_width() * SPRITE_SCALE))
+                nh = max(1, int(f.get_height() * SPRITE_SCALE))
+                self.walkingFrames.append(pygame.transform.smoothscale(f, (nw, nh)))
+            for f in hit_frames_right:
+                nw = max(1, int(f.get_width() * SPRITE_SCALE))
+                nh = max(1, int(f.get_height() * SPRITE_SCALE))
+                self.hitFrames.append(pygame.transform.smoothscale(f, (nw, nh)))
+        except Exception:
+            # If frames aren't available, leave lists empty and fallback later
+            pass
+        self.frame_index = 0.0
+        self.hit = False
+        self.remove_timer = None
+        # initial image
+        if self.walkingFrames:
+            self.image = self.walkingFrames[0]
+        else:
+            # fallback: simple green circle surface
+            s = max(8, int(GOAL_RADIUS * SPRITE_SCALE))
+            surf = pygame.Surface((s, s), pygame.SRCALPHA)
+            pygame.draw.circle(surf, (0, 255, 0), (s//2, s//2), s//2)
+            self.image = surf
+        self.rect = self.image.get_rect()
+
+    def step(self):
+        # Advance animation
+        if not self.hit:
+            if self.walkingFrames:
+                self.frame_index = (self.frame_index + 0.2) % len(self.walkingFrames)
+                self.image = self.walkingFrames[int(self.frame_index)]
+        else:
+            if self.hitFrames:
+                self.frame_index = (self.frame_index + 0.2) % len(self.hitFrames)
+                self.image = self.hitFrames[int(self.frame_index)]
+            if self.remove_timer is not None:
+                self.remove_timer -= 1
+                if self.remove_timer <= 0:
+                    self.kill()
+
+    def sync_to_camera(self, cam_x, cam_y):
+        # Position sprite on screen based on camera
+        screen_x = int(self.world_x - cam_x)
+        screen_y = int(self.world_y - cam_y)
+        # keep same midbottom alignment as Goal demo
+        self.rect = self.image.get_rect(midbottom=(screen_x, screen_y))
+
+    def mark_hit(self):
+        self.hit = True
+        self.remove_timer = HIT_DISPLAY_FRAMES
+
+
 def generate_goals():
-    global goals
+    global goals, goal_sprites, goal_sprite_map
     goals = []
+    goal_sprites.empty()
+    goal_sprite_map.clear()
     attempts = 0
     # Scatter across full map, but safe from red AND only below y=4215 (y > FORBIDDEN_Y_MAX, since higher y = above)
     min_y = FORBIDDEN_Y_MAX + 1  # Start just below the line
+    index = 0
     while len(goals) < NUM_GOALS and attempts < 500:  # Broad search
         goal_x = random.randint(100, WORLD_WIDTH - 100)
         goal_y = random.randint(min_y, WORLD_HEIGHT - 100)
         if not check_collision(goal_x, goal_y, GOAL_RADIUS):
             goals.append([goal_x, goal_y])
+            # create visual sprite
+            gs = GoalSprite(goal_x, goal_y, index=index)
+            goal_sprites.add(gs)
+            goal_sprite_map[(int(goal_x), int(goal_y))] = gs
+            index += 1
         attempts += 1
 
 def check_goal_hit(ball_pos, ball_radius):
     global score, streak
+    global screen_shake_timer
     hits_this_shot = 0
     hit_goals = []  # Track for multi-hit
     for i in range(len(goals)-1, -1, -1):  # Reverse to avoid index shift
@@ -225,13 +405,18 @@ def check_goal_hit(ball_pos, ball_radius):
         dy = ball_pos[1] - goal[1]
         dist = math.sqrt(dx**2 + dy**2)
         if dist < GOAL_RADIUS + ball_radius:
-            hit_goals.append(goals[i])
+            gx, gy = goals[i][0], goals[i][1]
+            hit_goals.append([gx, gy])
             hits_this_shot += 1
             del goals[i]
             # Particle burst at goal
             for _ in range(PARTICLE_COUNT):
-                p = SporeParticle(goal[0], goal[1])
+                p = SporeParticle(gx, gy)
                 particles.add(p)
+            # Mark visual sprite as hit (if present) and schedule its removal
+            gs = goal_sprite_map.pop((int(gx), int(gy)), None)
+            if gs:
+                gs.mark_hit()
     if hits_this_shot > 0:
         # Scoring: give extra reward for multi-goal strikes.
         # Use an exponential combo so multi-hit strikes are worth noticeably more.
@@ -251,6 +436,15 @@ def check_goal_hit(ball_pos, ball_radius):
         score += points
         streak += hits_this_shot  # Build streak on hit(s)
         mushroom_ball.hit_this_shot = True
+        # Spawn firework particles for a more celebratory collision effect
+        spawned = 0
+        for gx, gy in hit_goals:
+            for _ in range(FIREWORK_PARTICLE_COUNT):
+                fp = FireworkParticle(gx, gy, color=random.choice(FIREWORK_COLORS))
+                particles.add(fp)
+                spawned += 1
+        # Short camera shake
+        screen_shake_timer = SCREEN_SHAKE_FRAMES
         # Play scored sound if available
         try:
             if scored_sound:
@@ -270,6 +464,7 @@ mushroom_ball = MushroomBall()
 def update_camera():
     """Update camera to center on player, but lerp toward ball if active."""
     global cam_x, cam_y, cam_target_x, cam_target_y
+    global screen_shake_timer
     # Target: Midpoint between player and ball if active
     if mushroom_ball.active:
         mid_x = (player_pos[0] + mushroom_ball.pos[0]) / 2
@@ -288,6 +483,17 @@ def update_camera():
     # Clamp camera so edges don't show outside world
     cam_x = max(0, min(cam_x, WORLD_WIDTH - SCREEN_WIDTH))
     cam_y = max(0, min(cam_y, WORLD_HEIGHT - SCREEN_HEIGHT))
+
+    # Apply screen shake if active
+    if screen_shake_timer and screen_shake_timer > 0:
+        # Shake magnitude fades with timer
+        frac = screen_shake_timer / float(max(1, SCREEN_SHAKE_FRAMES))
+        shake_amount = 6 * frac
+        sx = random.uniform(-shake_amount, shake_amount)
+        sy = random.uniform(-shake_amount, shake_amount)
+        cam_x += sx
+        cam_y += sy
+        screen_shake_timer -= 1
 
 def draw_minimap(screen):
     """Draw small minimap in top-right showing scaled real map + elements."""
@@ -470,23 +676,35 @@ while running:
     src_rect = pygame.Rect(cam_x, cam_y, SCREEN_WIDTH, SCREEN_HEIGHT)
     screen.blit(map_image, (0, 0), src_rect)  # Background map viewport ONLY
 
-    # Draw particles
-    particles.draw(screen)
+    # Draw particles (world -> screen offset)
+    for p in list(particles):
+        try:
+            # p.rect stores world coordinates; offset by camera
+            screen_x = int(p.rect.x - cam_x)
+            screen_y = int(p.rect.y - cam_y)
+            screen.blit(p.image, (screen_x, screen_y))
+        except Exception:
+            # Fallback to default draw if anything goes wrong
+            try:
+                particles.draw(screen)
+            except Exception:
+                pass
 
-    # Draw goals (pulsing with numbers)
+    # Draw goal sprites (animated). Update and blit each sprite relative to camera.
     goal_timer += 1
-    pulse = 1 + 0.2 * math.sin(goal_timer * 0.1)  # Gentle pulse
-    for i, goal in enumerate(goals):
-        screen_x = int(goal[0] - cam_x)
-        screen_y = int(goal[1] - cam_y)
-        if -GOAL_RADIUS <= screen_x <= SCREEN_WIDTH + GOAL_RADIUS and -GOAL_RADIUS <= screen_y <= SCREEN_HEIGHT + GOAL_RADIUS:  # Draw if near screen
-            pulse_radius = int(GOAL_RADIUS * pulse)
-            pygame.draw.circle(screen, (0, 255, 0), (screen_x, screen_y), pulse_radius)  # Green glow
-            # Inner white core
-            pygame.draw.circle(screen, (255, 255, 255), (screen_x, screen_y), GOAL_RADIUS // 2)
-            # Number label
-            label = font.render(str(i+1), True, (255, 0, 0))
-            screen.blit(label, (screen_x - 5, screen_y - 5))
+    for gs in list(goal_sprites):
+        gs.step()
+        gs.sync_to_camera(cam_x, cam_y)
+        # Only blit if on screen
+        if -100 <= gs.rect.right and gs.rect.left <= SCREEN_WIDTH + 100 and -100 <= gs.rect.bottom and gs.rect.top <= SCREEN_HEIGHT + 100:
+            screen.blit(gs.image, gs.rect)
+            # Draw numbering if the sprite still corresponds to an active goal coordinate
+            # We stored an index when creating sprites
+            try:
+                label = font.render(str(gs.index + 1), True, (255, 0, 0))
+                screen.blit(label, (gs.rect.centerx - 5, gs.rect.top - 15))
+            except Exception:
+                pass
 
     # Draw player (always centered since cam follows)
     pygame.draw.circle(screen, (0, 0, 255), (SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2), player_radius)
