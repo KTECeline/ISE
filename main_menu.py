@@ -10,12 +10,12 @@ from random import uniform, randint
 # -------------------------
 # Configuration
 # -------------------------
-BG_PATH = r"C:\Users\Xdimt\Downloads\background.img.png"
-STORY_BG_PATH = r"C:\Users\Xdimt\Downloads\story_background.png"
+BG_PATH = r"assets/images/background.img.png"
+STORY_BG_PATH = r"assets/images/story_background.png"
 FONT_PATH = os.path.join("assets", "fonts", "skooled_serif.ttf")
-HOVER_SFX = r"C:\Users\Xdimt\Downloads\Hover.mp3"
-CLICK_SFX = r"C:\Users\Xdimt\Downloads\Click.mp3"
-MUSIC_PATH = r"C:\Users\Xdimt\Downloads\Background_music.mp3"
+HOVER_SFX = r"assets/sounds/Hover.mp3"
+CLICK_SFX = r"assets/sounds/Click.mp3"
+MUSIC_PATH = r"assets/sounds/Background_music.mp3"
 
 SCREEN_WIDTH = 1280
 SCREEN_HEIGHT = 720
