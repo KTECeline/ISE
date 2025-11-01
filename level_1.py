@@ -556,19 +556,6 @@ def update():
             moving = True
             squating = True
 
-        # --- Jump ---
-        if held_keys['space'] and on_ground and can_jump:
-            can_jump = False
-            velocity_y = jump_speed
-            on_ground = False
-            if facePosition == 'right':
-                player.play_animation('jumpright')
-                current_animation = 'jumpright'
-            else:
-                player.play_animation('jumpleft')
-                current_animation = 'jumpleft'
-            moving = True
-
         # --- jumpdown feature ---
         if held_keys['s'] and not on_ground and velocity_y > -5:
             # faster fall when pressing S in air
