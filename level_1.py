@@ -54,13 +54,18 @@ collision_ground = Entity(
     visible=False  # Hide the collision map
 )
 
+# Variables to track diagnostic mode
+diagnostic_mode = False
+prev_t_state = False
+
 # Debug text for collision checking
 collision_debug = Text(
     text='No collision data',
     position=(-0.5, 0.4),
     scale=1.2,
     origin=(0, 0),
-    background=True
+    background=True,
+    enabled=False  # Hidden by default
 )
 
 # Create player (yellow circle blob)
@@ -157,20 +162,17 @@ min_height = 5
 max_height = 100
 zoom_speed = 2
 
-# Camera controls info
-info_text = Text(
-    text='Top-down view | WASD to move | Q/E or scroll to zoom',
-    position=(-0.5, 0.45),
-    scale=1.2,
-    origin=(0, 0),
-    background=True
-)
+# Diagnostic view settings
+diagnostic_base_height = 5  # Lower default diagnostic view height
+diagnostic_min_zoom = 3
+diagnostic_max_zoom = 40  # Increased max zoom for more zoomed out view
+diagnostic_zoom = 25  # Starting with a more zoomed out view
 
 # Score display
 score = 0
 score_text = Text(
     text='Mushroom Coins collected: 0',
-    position=(-0.5, 0.35),
+    position=(-0.5, 0.45),
     scale=1.2,
     origin=(0, 0),
     background=True
@@ -182,7 +184,8 @@ zoom_indicator = Text(
     position=(0.7, 0.45),
     scale=1.2,
     origin=(0, 0),
-    background=True
+    background=True,
+    enabled=False  # Hidden by default
 )
 
 def check_coin_collection(coin, player):
@@ -192,9 +195,24 @@ def check_coin_collection(coin, player):
     return distance < 1
 
 def update():
-    global score
+    global score, diagnostic_mode, prev_t_state
     # Update coin animation
     update_coin_animation()
+    
+    # Toggle diagnostic mode when T is pressed (not held)
+    if held_keys['t'] and not prev_t_state:
+        diagnostic_mode = not diagnostic_mode
+    prev_t_state = held_keys['t']
+    
+    # Update UI elements based on diagnostic mode
+    collision_debug.enabled = diagnostic_mode
+    zoom_indicator.enabled = diagnostic_mode
+    
+    # Update camera rotation in diagnostic mode
+    if diagnostic_mode:
+        camera.rotation_x = lerp(camera.rotation_x, 45, time.dt * 5)
+    else:
+        camera.rotation_x = lerp(camera.rotation_x, 90, time.dt * 5)
     
     # Check coin collection
     if red_coin.enabled and check_coin_collection(red_coin, player):
@@ -255,33 +273,58 @@ def update():
             # If we can't get the pixel color (out of bounds), don't move
             pass
     
-    # Camera follows player
-    camera.position = (player.x, camera.y, player.z)
-    
-    # Zoom with Q and E keys
-    if held_keys['q']:
-        camera.y += zoom_speed * time.dt * 10
-        camera.y = clamp(camera.y, min_height, max_height)
-    
-    if held_keys['e']:
-        camera.y -= zoom_speed * time.dt * 10
-        camera.y = clamp(camera.y, min_height, max_height)
+    # Camera follows player with offset in diagnostic mode
+    if diagnostic_mode:
+        global diagnostic_zoom
+        # Handle zoom in diagnostic mode
+        if held_keys['q']:
+            diagnostic_zoom -= zoom_speed * time.dt * 40
+            diagnostic_zoom = clamp(diagnostic_zoom, diagnostic_min_zoom, diagnostic_max_zoom)
+        if held_keys['e']:
+            diagnostic_zoom += zoom_speed * time.dt * 40
+            diagnostic_zoom = clamp(diagnostic_zoom, diagnostic_min_zoom, diagnostic_max_zoom)
+            
+        # Calculate camera position with dynamic offset based on zoom
+        camera_offset = -(diagnostic_zoom * 0.25)  # Further reduced offset scale
+        
+        camera.position = (
+            player.x, 
+            player.y + (diagnostic_zoom * 0.3),  # Further reduced height multiplier
+            player.z + camera_offset
+        )
+    else:
+        # Normal mode camera and zoom
+        if held_keys['q']:
+            camera.y += zoom_speed * time.dt * 10
+            camera.y = clamp(camera.y, min_height, max_height)
+        if held_keys['e']:
+            camera.y -= zoom_speed * time.dt * 10
+            camera.y = clamp(camera.y, min_height, max_height)
+        camera.position = (player.x, camera.y, player.z)
     
     # Update zoom indicator
     zoom_indicator.text = f'Height: {int(camera.y)}'
 
 def input(key):
+    global diagnostic_zoom
     if key == 'escape':
         application.quit()
     
     # Zoom with scroll wheel
-    if key == 'scroll up':
-        camera.y -= zoom_speed
-        camera.y = clamp(camera.y, min_height, max_height)
-    
-    if key == 'scroll down':
-        camera.y += zoom_speed
-        camera.y = clamp(camera.y, min_height, max_height)
+    if diagnostic_mode:
+        if key == 'scroll up':
+            diagnostic_zoom -= zoom_speed * 4  # Increased scroll sensitivity
+            diagnostic_zoom = clamp(diagnostic_zoom, diagnostic_min_zoom, diagnostic_max_zoom)
+        if key == 'scroll down':
+            diagnostic_zoom += zoom_speed * 4  # Increased scroll sensitivity
+            diagnostic_zoom = clamp(diagnostic_zoom, diagnostic_min_zoom, diagnostic_max_zoom)
+    else:
+        if key == 'scroll up':
+            camera.y -= zoom_speed
+            camera.y = clamp(camera.y, min_height, max_height)
+        if key == 'scroll down':
+            camera.y += zoom_speed
+            camera.y = clamp(camera.y, min_height, max_height)
 
 # Add ambient light for better visibility
 AmbientLight(color=color.rgba(255, 255, 255, 0.5))
