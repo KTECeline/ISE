@@ -54,6 +54,53 @@ collision_ground = Entity(
     visible=False  # Hide the collision map
 )
 
+# Create an upper layer with the inverted map for 3D effect
+upper_layer = Entity(
+    model='plane',
+    texture=load_texture('assets/textures/map/Level_1_The_Fungal_Ascent_Layering_Inverted.png'),
+    scale=(81, 1, 75),
+    position=(0, 0.5, 0),  # Slightly above the ground
+    alpha=1  # Full opacity for black parts
+)
+
+# Set shader for the upper layer to only show black parts
+from ursina.shaders import lit_with_shadows_shader
+upper_layer.shader = lit_with_shadows_shader
+upper_layer.set_shader_input('texture_scale', Vec2(1,1))
+upper_layer.set_shader_input('alpha_texture', upper_layer.texture)
+upper_layer.texture_scale = (1,1)
+
+# Custom shader to only show black parts
+upper_layer.shader = Shader(
+    vertex='''
+    #version 430
+    uniform mat4 p3d_ModelViewProjectionMatrix;
+    in vec4 p3d_Vertex;
+    in vec2 p3d_MultiTexCoord0;
+    out vec2 uv;
+    void main() {
+        gl_Position = p3d_ModelViewProjectionMatrix * p3d_Vertex;
+        uv = p3d_MultiTexCoord0;
+    }
+    ''',
+    
+    fragment='''
+    #version 430
+    uniform sampler2D p3d_Texture0;
+    in vec2 uv;
+    out vec4 fragColor;
+    void main() {
+        vec4 color = texture(p3d_Texture0, uv);
+        // Only show pixels that are black (RGB = 0,0,0)
+        if (color.r == 0.0 && color.g == 0.0 && color.b == 0.0) {
+            fragColor = vec4(0.0, 0.0, 0.0, 1.0);
+        } else {
+            fragColor = vec4(0.0, 0.0, 0.0, 0.0);  // Transparent for non-black pixels
+        }
+    }
+    '''
+)
+
 # Variables to track diagnostic mode
 diagnostic_mode = False
 prev_t_state = False
