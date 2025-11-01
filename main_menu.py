@@ -1,3 +1,21 @@
+"""
+main_menu.py - FUNGAL WASTES
+Polished Pygame main menu (cleaned & corrected)
+Features:
+- background image (user path fallback)
+- procedural stone-textured buttons (darker base)
+- neon green hover glow
+- title with dark moss outline and subtle pulse
+- footer "Developed by G23" (plain white)
+- main menu: Start Game | Options | Exit
+- Options submenu: Marketplace | Level 2 | Back
+- Level 2 uses in-process placeholder scene with fade transition
+- hover/click sfx optional, music optional
+- floating spores particle effect
+- robust fallbacks for missing assets and audio
+- Story scene with typing effect before starting level 1
+"""
+
 import pygame
 import sys
 import os
@@ -10,11 +28,12 @@ from random import uniform, randint
 # -------------------------
 # Configuration
 # -------------------------
-BG_PATH = r"assets/images/background.img.png"  # user-specified
+BG_PATH = r"C:\Users\Xdimt\Downloads\background.img.png"  # user-specified
+STORY_BG_PATH = r"C:\Users\Xdimt\Downloads\story_background.png"  # story background
 FONT_PATH = os.path.join("assets", "fonts", "skooled_serif.ttf")  # optional
-HOVER_SFX = r"assets/sounds/Hover.mp3"
-CLICK_SFX = r"assets/sounds/Click.mp3"
-MUSIC_PATH = r"assets/sounds/Background_music.mp3"  # optional
+HOVER_SFX = r"C:\Users\Xdimt\Downloads\Hover.mp3"  # Updated path
+CLICK_SFX = r"C:\Users\Xdimt\Downloads\Click.mp3"  # Updated path
+MUSIC_PATH = r"C:\Users\Xdimt\Downloads\Background_music.mp3"  # Updated path
 
 SCREEN_WIDTH = 1280
 SCREEN_HEIGHT = 720
@@ -30,6 +49,7 @@ BUTTON_TOP = (70, 92, 70)
 BUTTON_BOTTOM = (40, 58, 40)
 BUTTON_BORDER = (20, 36, 20)
 STATS_COLOR = (220, 230, 220)
+STORY_TEXT_COLOR = (220, 240, 220)   # Light green for story text
 
 # Buttons layout
 BUTTON_W = 420
@@ -41,6 +61,14 @@ BUTTON_SPACING = 96
 # Particles (spores)
 NUM_SPORES = 70
 SPORE_COLOR = (200, 255, 170)
+
+# Story text
+STORY_LINES = [
+    "You awaken in the Fungal Wastes — the air thick with spores and echoes of lost souls.",
+    "The mushrooms pulse faintly, whispering of secrets buried deep below.",
+    "To survive here, you must learn to listen... to the forest, and to yourself.",
+    "Your journey begins now."
+]
 
 # -------------------------
 # Initialization
@@ -79,6 +107,7 @@ def load_background(path):
     return surf
 
 background = load_background(BG_PATH)
+story_background = load_background(STORY_BG_PATH)
 
 # -------------------------
 # Fonts
@@ -97,6 +126,7 @@ def load_font(path, size, fallback_name=None):
 title_font = load_font(FONT_PATH, 86, fallback_name="Georgia")
 button_font = load_font(FONT_PATH, 36, fallback_name="Arial")
 small_font = load_font(FONT_PATH, 18, fallback_name="Arial")
+story_font = load_font(FONT_PATH, 32, fallback_name="Georgia")  # Font for story text
 
 # -------------------------
 # Sounds (optional)
@@ -243,16 +273,74 @@ class Button:
             self.callback()
 
 # -------------------------
+# Story scene typing effect
+# -------------------------
+class StoryTypingEffect:
+    def __init__(self, lines):
+        self.lines = lines
+        self.current_line = 0
+        self.current_char = 0
+        self.last_update_time = 0
+        self.char_delay = 35  # ms between characters
+        self.line_delay = 1200  # ms between lines
+        self.finished = False
+        self.waiting_for_next = False
+        
+    def update(self, current_time):
+        if self.finished or self.waiting_for_next:
+            return
+            
+        if current_time - self.last_update_time > self.char_delay:
+            self.last_update_time = current_time
+            self.current_char += 1
+            
+            # Check if current line is complete
+            if self.current_char >= len(self.lines[self.current_line]):
+                self.waiting_for_next = True
+                
+    def skip_or_next(self):
+        if self.waiting_for_next:
+            # Move to next line
+            self.current_line += 1
+            self.current_char = 0
+            self.waiting_for_next = False
+            
+            # Check if all lines are done
+            if self.current_line >= len(self.lines):
+                self.finished = True
+        else:
+            # Skip to end of current line
+            self.current_char = len(self.lines[self.current_line])
+            self.waiting_for_next = True
+            
+    def get_current_text(self):
+        if self.finished:
+            return None
+            
+        current_text = self.lines[self.current_line][:self.current_char]
+        return current_text
+        
+    def is_complete(self):
+        return self.finished
+
+# -------------------------
 # Scenes & callbacks
 # -------------------------
 def start_game_cb():
+    set_scene_with_fade("story")
+
+def start_level_1():
     if os.path.exists("level_1.py"):
         try:
             subprocess.run([sys.executable, "level_1.py"])
+            # If we return from level_1, go back to main menu
+            set_scene_with_fade("menu")
         except Exception as e:
             print("[WARN] launching level_1.py failed:", e)
+            set_scene_with_fade("menu")
     else:
         print("[INFO] level_1.py not found — placeholder start.")
+        set_scene_with_fade("menu")
 
 def set_scene_with_fade(target):
     global scene_fade
@@ -296,6 +384,7 @@ level2_buttons = [
 # scene state
 current_scene = "menu"
 scene_fade = {"active": False, "alpha": 0, "dir": 0, "target": None}
+story_typing = StoryTypingEffect(STORY_LINES)
 
 # -------------------------
 # Drawing helpers
@@ -348,7 +437,7 @@ def render_menu(dt, mouse_pos):
     for i, t in enumerate(stats):
         screen.blit(small_font.render(t, True, STATS_COLOR), (48, 220 + i*28))
     for b in main_buttons: b.draw(screen)
-    footer = small_font.render("Developed by G23", True, WHITE)
+    footer = small_font.render("Developed by G23", True, WHITE)  # Updated
     screen.blit(footer, footer.get_rect(center=(SCREEN_WIDTH//2, SCREEN_HEIGHT-28)))
 
 def render_options(dt, mouse_pos):
@@ -360,7 +449,7 @@ def render_options(dt, mouse_pos):
     for s in spores: s.draw(screen)
     draw_centered_title(screen, "OPTIONS", title_font, (210,240,210), DARK_MOSS_OUTLINE, SCREEN_WIDTH//2, 140)
     for b in opt_buttons: b.draw(screen)
-    footer = small_font.render("Developed by G23", True, WHITE)
+    footer = small_font.render("Developed by G23", True, WHITE)  # Updated
     screen.blit(footer, footer.get_rect(center=(SCREEN_WIDTH//2, SCREEN_HEIGHT-28)))
 
 def render_marketplace(dt, mouse_pos):
@@ -371,7 +460,7 @@ def render_marketplace(dt, mouse_pos):
     info = small_font.render("Marketplace coming soon. Use Back to return.", True, STATS_COLOR)
     screen.blit(info, info.get_rect(center=(SCREEN_WIDTH//2, SCREEN_HEIGHT//2)))
     for b in market_buttons: b.draw(screen)
-    footer = small_font.render("Developed by Rowaida", True, WHITE)
+    footer = small_font.render("Developed by G23", True, WHITE)  # Updated
     screen.blit(footer, footer.get_rect(center=(SCREEN_WIDTH//2, SCREEN_HEIGHT-28)))
 
 def render_level2(dt, mouse_pos):
@@ -381,14 +470,78 @@ def render_level2(dt, mouse_pos):
     info = small_font.render("Level 2 placeholder. Press Back to return.", True, STATS_COLOR)
     screen.blit(info, info.get_rect(center=(SCREEN_WIDTH//2, SCREEN_HEIGHT//2)))
     for b in level2_buttons: b.draw(screen)
-    footer = small_font.render("Developed by Rowaida", True, WHITE)
+    footer = small_font.render("Developed by G23", True, WHITE)  # Updated
     screen.blit(footer, footer.get_rect(center=(SCREEN_WIDTH//2, SCREEN_HEIGHT-28)))
+
+def render_story(dt, mouse_pos, current_time):
+    screen.blit(story_background, (0,0))
+    
+    # Add dark overlay for better text readability
+    overlay = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
+    overlay.fill((0, 0, 0, 120))  # Semi-transparent black
+    screen.blit(overlay, (0, 0))
+    
+    # Update typing effect
+    global story_typing
+    story_typing.update(current_time)
+    
+    # Draw current text
+    current_text = story_typing.get_current_text()
+    if current_text:
+        # Render text with word wrapping
+        text_surface = render_text_with_wrapping(current_text, story_font, STORY_TEXT_COLOR, SCREEN_WIDTH - 200)
+        text_rect = text_surface.get_rect(center=(SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2))
+        screen.blit(text_surface, text_rect)
+        
+        # Show "Continue" prompt if waiting for next line
+        if story_typing.waiting_for_next and not story_typing.finished:
+            prompt = small_font.render("Click or press any key to continue...", True, (200, 200, 200))
+            prompt_rect = prompt.get_rect(center=(SCREEN_WIDTH // 2, SCREEN_HEIGHT - 100))
+            screen.blit(prompt, prompt_rect)
+    
+    # If story is complete, show final prompt and transition after delay
+    if story_typing.is_complete():
+        prompt = small_font.render("Click or press any key to begin your journey...", True, (200, 200, 200))
+        prompt_rect = prompt.get_rect(center=(SCREEN_WIDTH // 2, SCREEN_HEIGHT - 100))
+        screen.blit(prompt, prompt_rect)
+
+def render_text_with_wrapping(text, font, color, max_width):
+    words = text.split(' ')
+    lines = []
+    current_line = []
+    
+    for word in words:
+        test_line = ' '.join(current_line + [word])
+        test_width = font.size(test_line)[0]
+        
+        if test_width <= max_width:
+            current_line.append(word)
+        else:
+            lines.append(' '.join(current_line))
+            current_line = [word]
+    
+    if current_line:
+        lines.append(' '.join(current_line))
+    
+    # Create a surface with the total height needed
+    line_height = font.get_linesize()
+    total_height = line_height * len(lines)
+    surface = pygame.Surface((max_width, total_height), pygame.SRCALPHA)
+    
+    # Render each line
+    y = 0
+    for line in lines:
+        line_surface = font.render(line, True, color)
+        surface.blit(line_surface, (0, y))
+        y += line_height
+    
+    return surface
 
 # -------------------------
 # Main loop
 # -------------------------
 def main_loop():
-    global fade_alpha, current_scene, scene_fade
+    global fade_alpha, current_scene, scene_fade, story_typing
     running = True
     last = pygame.time.get_ticks()
     while running:
@@ -403,30 +556,50 @@ def main_loop():
                 running = False
             elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                 mouse_pos = pygame.mouse.get_pos()
-                for b in visible_buttons_list():
-                    if b.rect.collidepoint(mouse_pos):
-                        b.click()
+                if current_scene == "story":
+                    # Handle story scene click
+                    if story_typing.is_complete():
+                        # Story finished, start the game
+                        start_level_1()
+                    else:
+                        # Skip to next line or complete current line
+                        story_typing.skip_or_next()
+                else:
+                    # Handle button clicks in other scenes
+                    for b in visible_buttons_list():
+                        if b.rect.collidepoint(mouse_pos):
+                            b.click()
             elif event.type == pygame.KEYDOWN:
                 if event.key == pygame.K_ESCAPE:
                     save_game_data(game_data)
                     running = False
-                elif event.key in (pygame.K_UP, pygame.K_w):
-                    btns = visible_buttons_list()
-                    if btns:
-                        sel = next((i for i,b in enumerate(btns) if b.hovered), 0)
-                        sel = (sel - 1) % len(btns)
-                        for i,b in enumerate(btns): b.hovered = (i==sel)
-                elif event.key in (pygame.K_DOWN, pygame.K_s):
-                    btns = visible_buttons_list()
-                    if btns:
-                        sel = next((i for i,b in enumerate(btns) if b.hovered), 0)
-                        sel = (sel + 1) % len(btns)
-                        for i,b in enumerate(btns): b.hovered = (i==sel)
-                elif event.key in (pygame.K_RETURN, pygame.K_SPACE):
-                    btns = visible_buttons_list()
-                    if btns:
-                        sel = next((i for i,b in enumerate(btns) if b.hovered), 0)
-                        btns[sel].click()
+                elif current_scene == "story":
+                    # Handle story scene key press
+                    if story_typing.is_complete():
+                        # Story finished, start the game
+                        start_level_1()
+                    else:
+                        # Skip to next line or complete current line
+                        story_typing.skip_or_next()
+                else:
+                    # Handle keyboard navigation in other scenes
+                    if event.key in (pygame.K_UP, pygame.K_w):
+                        btns = visible_buttons_list()
+                        if btns:
+                            sel = next((i for i,b in enumerate(btns) if b.hovered), 0)
+                            sel = (sel - 1) % len(btns)
+                            for i,b in enumerate(btns): b.hovered = (i==sel)
+                    elif event.key in (pygame.K_DOWN, pygame.K_s):
+                        btns = visible_buttons_list()
+                        if btns:
+                            sel = next((i for i,b in enumerate(btns) if b.hovered), 0)
+                            sel = (sel + 1) % len(btns)
+                            for i,b in enumerate(btns): b.hovered = (i==sel)
+                    elif event.key in (pygame.K_RETURN, pygame.K_SPACE):
+                        btns = visible_buttons_list()
+                        if btns:
+                            sel = next((i for i,b in enumerate(btns) if b.hovered), 0)
+                            btns[sel].click()
 
         mouse_pos = pygame.mouse.get_pos()
 
@@ -441,6 +614,9 @@ def main_loop():
                 if scene_fade["alpha"] >= 255:
                     # switch scene now
                     current_scene = scene_fade.get("target", current_scene)
+                    # Reset story typing if entering story scene
+                    if current_scene == "story":
+                        story_typing = StoryTypingEffect(STORY_LINES)
                     scene_fade["dir"] = -1
             elif scene_fade["dir"] == -1:
                 scene_fade["alpha"] = max(0, scene_fade["alpha"] - 8)
@@ -460,6 +636,8 @@ def main_loop():
         elif current_scene == "level2":
             for b in level2_buttons: b.update(dt, mouse_pos)
             render_level2(dt, mouse_pos)
+        elif current_scene == "story":
+            render_story(dt, mouse_pos, now)
 
         # draw fade overlays (initial menu fade or scene transitions)
         if scene_fade.get("active", False):
