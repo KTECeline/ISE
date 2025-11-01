@@ -340,10 +340,10 @@ def update_coin_animation():
         blue_coin.animation_time = 0
 
 # Create camera positioned above the player for top-down view
-camera.position = (0, 50, 0)
+camera.position = (0, 21, 0)  # Set default height to 21
 camera.rotation_x = 90
 
-# Zoom settings
+# Zoom settings (only used in diagnostic mode)
 min_height = 5
 max_height = 100
 zoom_speed = 2
@@ -367,11 +367,12 @@ score_text = Text(
 # Zoom level indicator
 zoom_indicator = Text(
     text=f'Height: {int(camera.y)}',
-    position=(0.7, 0.45),
-    scale=1.2,
+    position=(-0.85, -0.45),
+    scale=2,
+    color=color.white,
     origin=(0, 0),
     background=True,
-    enabled=False  # Hidden by default
+    enabled=False  # Hidden
 )
 
 def check_coin_collection(coin, player):
@@ -443,7 +444,6 @@ def update():
     
     # Update UI elements based on diagnostic mode
     collision_debug.enabled = diagnostic_mode
-    zoom_indicator.enabled = diagnostic_mode
     
     # Update camera rotation in diagnostic mode
     if diagnostic_mode:
@@ -662,14 +662,8 @@ def update():
             player.z + camera_offset
         )
     else:
-        # Normal mode camera and zoom
-        if held_keys['q']:
-            camera.y += zoom_speed * time.dt * 10
-            camera.y = clamp(camera.y, min_height, max_height)
-        if held_keys['e']:
-            camera.y -= zoom_speed * time.dt * 10
-            camera.y = clamp(camera.y, min_height, max_height)
-        camera.position = (player.x, camera.y, player.z)
+        # Normal mode - fixed camera height at 21
+        camera.position = (player.x, 21, player.z + 2)  # Added offset to z to see more of the terrain ahead
     
     # Update zoom indicator
     zoom_indicator.text = f'Height: {int(camera.y)}'
@@ -688,12 +682,8 @@ def input(key):
             diagnostic_zoom += zoom_speed * 4
             diagnostic_zoom = clamp(diagnostic_zoom, diagnostic_min_zoom, diagnostic_max_zoom)
     else:
-        if key == 'scroll up':
-            camera.y -= zoom_speed
-            camera.y = clamp(camera.y, min_height, max_height)
-        if key == 'scroll down':
-            camera.y += zoom_speed
-            camera.y = clamp(camera.y, min_height, max_height)
+        # No zoom controls in normal mode
+        pass
 
 # Add ambient light for better visibility
 AmbientLight(color=color.rgba(255, 255, 255, 0.5))
