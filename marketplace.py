@@ -367,7 +367,18 @@ def main():
             if isinstance(result, tuple) and result[0] == 'level2':
                 selected_powerups = result[1]
                 print("Carry these into Level 2:", selected_powerups)
-                running = False  # Exit for now (you’ll launch Level 2 here)
+                # Launch Level 2 as a separate process and exit marketplace.
+                try:
+                    pygame.quit()
+                except Exception:
+                    pass
+                # Use the same Python interpreter to run the level script
+                try:
+                    import subprocess
+                    subprocess.Popen([sys.executable, "level_2.py"])  # non-blocking
+                except Exception as e:
+                    print("Failed to launch Level 2 directly:", e)
+                running = False
 
         marketplace.update()
         screen.fill((0, 0, 0))

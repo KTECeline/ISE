@@ -2,6 +2,7 @@ import pygame
 import sys
 import random
 import math
+import json
 from level2.goal import walking_frames_right, hit_frames_right
 
 # Initialize Pygame
@@ -42,6 +43,9 @@ SCREEN_SHAKE_FRAMES = 12  # frames of camera shake when hit
 screen_shake_timer = 0
 SHOW_HIT_DEBUG = False  # This flag is no longer needed; removing it.
 
+# Aura settings
+AURA_RADIUS = 150  # world units radius of the aura around the player
+
 # Rolling / squish animation settings for the sporeball
 ROLL_VELOCITY_THRESHOLD = 1.2  # start roll animation when speed exceeds this
 ROLL_FRAME_SPEED = 0.5  # how quickly to advance roll frames
@@ -55,6 +59,48 @@ BALL_TRAIL_SCALE_DECAY = 0.95  # each older trail image is this scale of the nex
 # Paths to your files (update if needed)
 MAP_PATH = 'assets/textures/map/Level_2_map.png'
 COLLISION_PATH = 'assets/textures/map/Level_2_collision.png'
+
+# ---------------- Inventory helpers & powerup config ----------------
+def load_inventory():
+    try:
+        with open('inventory.json', 'r') as f:
+            return json.load(f)
+    except FileNotFoundError:
+        return {}
+
+def save_inventory(inv):
+    try:
+        with open('inventory.json', 'w') as f:
+            json.dump(inv, f)
+    except Exception:
+        pass
+
+# Mapping of powerup keys to asset icons and display names
+POWERUP_INFO = {
+    'velocity_vial': {'img': 'speed1.png', 'name': 'Velocity Vial'},
+    'golden_gleam': {'img': 'gold1.png', 'name': 'Golden Gleam'},
+    'cluster_cap': {'img': 'magnet1.png', 'name': 'Cluster Cap'},
+    'aura_alembic': {'img': 'circle1.png', 'name': 'Aura Alembic'},
+}
+
+# Powerup runtime state (timers measured in frames)
+POWERUP_DURATION_FRAMES = int(6 * FPS)  # 6 seconds
+powerup_timers = {k: 0 for k in POWERUP_INFO.keys()}  # active effect timers
+# Temporary goals spawned by cluster_cap
+temp_goal_timers = {}
+# Full-screen cluster overlay timer (frames)
+cluster_overlay_timer = 0
+# shoot speed multiplier used when velocity active
+shoot_speed_multiplier = 1.0
+# player movement speed multiplier (1.0 = normal)
+player_speed_multiplier = 1.0
+# score multiplier when golden is active
+score_multiplier_active = 1
+# aura active flag handled via timer
+# cluster cap spawns extra goals immediately when used; timer kept for visual UI
+
+# Load persisted inventory
+inventory = load_inventory()
 
 # Load images (now safe after dummy display)
 try:
@@ -104,6 +150,19 @@ WORLD_HEIGHT = map_image.get_height()
 screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
 pygame.display.set_caption("Level 2: Sporeball Gauntlet - Goals Only Below y=4215!")
 clock = pygame.time.Clock()
+
+# Load small icon images for powerups (used in bottom-left UI)
+powerup_images = {}
+for key, info in POWERUP_INFO.items():
+    path = f"assets/characters/{info['img']}"
+    try:
+        surf = pygame.image.load(path).convert_alpha()
+        # scale to a consistent icon size
+        surf = pygame.transform.smoothscale(surf, (48, 48))
+    except Exception:
+        surf = pygame.Surface((48, 48), pygame.SRCALPHA)
+        surf.fill((100, 100, 100, 200))
+    powerup_images[key] = surf
 
 # Player setup in WORLD coordinates (start near ball for convenience)
 player_pos = [730.0, 8230.0]  # Near ball start
@@ -261,7 +320,10 @@ class MushroomBall:
         dy = target_pos[1] - start_pos[1]
         dist = math.sqrt(dx**2 + dy**2)
         if dist > 0:
-            self.vel = [ (dx / dist) * BALL_SPEED, (dy / dist) * BALL_SPEED ]
+            # respect any active velocity multiplier
+            global shoot_speed_multiplier
+            sp = BALL_SPEED * (shoot_speed_multiplier if shoot_speed_multiplier else 1.0)
+            self.vel = [ (dx / dist) * sp, (dy / dist) * sp ]
         self.pos = start_pos[:]
         self.active = True
         self.stopped = False
@@ -530,7 +592,10 @@ def check_goal_hit(ball_pos, ball_radius):
         dx = ball_pos[0] - goal[0]
         dy = ball_pos[1] - goal[1]
         dist = math.sqrt(dx**2 + dy**2)
-        if dist < GOAL_RADIUS + ball_radius:
+        # If aura powerup is active, effectively increase goal radius for auto-hit
+        aura_extra = 20 if powerup_timers.get('aura_alembic', 0) > 0 else 0
+        effective_goal_radius = GOAL_RADIUS + aura_extra
+        if dist < effective_goal_radius + ball_radius:
             gx, gy = goals[i][0], goals[i][1]
             hit_goals.append([gx, gy])
             hits_this_shot += 1
@@ -559,6 +624,10 @@ def check_goal_hit(ball_pos, ball_radius):
         else:
             # Two goals in one strike: e.g. BASE_SCORE*2*COMBO -> 10*2*2 = 40
             points = int(BASE_SCORE * hits_this_shot * COMBO_MULTIPLIER)
+        # If golden gleam is active, double points while its timer > 0
+        if powerup_timers.get('golden_gleam', 0) > 0:
+            points = int(points * 2)
+
         score += points
         streak += hits_this_shot  # Build streak on hit(s)
         mushroom_ball.hit_this_shot = True
@@ -583,6 +652,65 @@ def check_goal_hit(ball_pos, ball_radius):
         popups.append(ScorePopup(avg_x, avg_y, points))
         return True
     return False
+
+
+def aura_collect():
+    """Auto-collect goals that are within AURA_RADIUS of the player.
+    This function removes goals, spawns particles/fireworks, awards points, and
+    schedules popups similar to check_goal_hit.
+    """
+    global score, streak, screen_shake_timer
+    hits = []
+    for i in range(len(goals)-1, -1, -1):
+        goal = goals[i]
+        dx = player_pos[0] - goal[0]
+        dy = player_pos[1] - goal[1]
+        dist = math.sqrt(dx*dx + dy*dy)
+        if dist < AURA_RADIUS:
+            gx, gy = goal[0], goal[1]
+            hits.append([gx, gy])
+            del goals[i]
+            # particle burst
+            for _ in range(PARTICLE_COUNT // 2):
+                particles.add(SporeParticle(gx, gy))
+            # remove visual sprite if present
+            gs = goal_sprite_map.pop((int(gx), int(gy)), None)
+            if gs:
+                gs.mark_hit()
+            # also remove from temp_goal_timers if present
+            temp_goal_timers.pop((int(gx), int(gy)), None)
+
+    if not hits:
+        return False
+
+    # scoring: treat these hits as a single multi-hit strike
+    n = len(hits)
+    if n == 1:
+        pts = BASE_SCORE if streak == 0 else int(BASE_SCORE * COMBO_MULTIPLIER)
+    else:
+        pts = int(BASE_SCORE * n * COMBO_MULTIPLIER)
+
+    # golden gleam doubles points if active
+    if powerup_timers.get('golden_gleam', 0) > 0:
+        pts = int(pts * 2)
+
+    score += pts
+    streak += n
+    mushroom_ball.hit_this_shot = True
+    # fireworks
+    for gx, gy in hits:
+        for _ in range(FIREWORK_PARTICLE_COUNT // 2):
+            particles.add(FireworkParticle(gx, gy, color=random.choice(FIREWORK_COLORS)))
+    # camera shake
+    screen_shake_timer = SCREEN_SHAKE_FRAMES
+    # popup at player position
+    popups.append(ScorePopup(player_pos[0], player_pos[1], pts))
+    try:
+        if scored_sound:
+            scored_sound.play()
+    except Exception:
+        pass
+    return True
 
 # Ball instance (starts at (730, 8230))
 mushroom_ball = MushroomBall()
@@ -727,9 +855,76 @@ level_complete = False
 font = pygame.font.SysFont(None, 24)
 big_font = pygame.font.SysFont(None, 48)
 while running:
+    # Build powerup slots (bottom-left) based on purchased counts
+    powerup_slots = []  # list of dicts: {key, rect, count}
+    base_x = 10
+    base_y = SCREEN_HEIGHT - 70
+    spacing = 64
+    idx = 0
+    for key in POWERUP_INFO.keys():
+        cnt = int(inventory.get(key, 0)) if inventory.get(key, 0) is not None else 0
+        if cnt > 0:
+            x = base_x + idx * spacing
+            r = pygame.Rect(x, base_y, 56, 56)
+            powerup_slots.append({'key': key, 'rect': r, 'count': cnt})
+            idx += 1
+
     for event in pygame.event.get():
         if event.type == pygame.QUIT:
             running = False
+        # Click on powerup slot to use it
+        if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+            mx, my = event.pos
+            for slot in powerup_slots:
+                if slot['rect'].collidepoint((mx, my)):
+                    k = slot['key']
+                    if inventory.get(k, 0) > 0 and powerup_timers.get(k, 0) == 0:
+                        # consume one
+                        inventory[k] = inventory.get(k, 0) - 1
+                        save_inventory(inventory)
+                        # activate effect for POWERUP_DURATION_FRAMES
+                        powerup_timers[k] = POWERUP_DURATION_FRAMES
+                        # apply immediate behaviors if needed
+                        if k == 'cluster_cap':
+                            # spawn up to 3 temporary goals near ball (or player if ball not active)
+                            spawned = 0
+                            # choose center: prefer ball if active, otherwise player
+                            if mushroom_ball and getattr(mushroom_ball, 'pos', None) and mushroom_ball.active:
+                                center_x, center_y = int(mushroom_ball.pos[0]), int(mushroom_ball.pos[1])
+                            else:
+                                center_x, center_y = int(player_pos[0]), int(player_pos[1])
+                            # try to place exactly 3 goals, with multiple attempts per placement
+                            for goal_i in range(3):
+                                placed = False
+                                for _try in range(12):
+                                    gx = center_x + random.randint(-100, 100)
+                                    gy = center_y + random.randint(-100, 100)
+                                    gx = max(GOAL_RADIUS, min(WORLD_WIDTH - GOAL_RADIUS, gx))
+                                    gy = max(GOAL_RADIUS, min(WORLD_HEIGHT - GOAL_RADIUS, gy))
+                                    if gy > FORBIDDEN_Y_MAX and not check_collision(gx, gy, GOAL_RADIUS):
+                                        goals.append([gx, gy])
+                                        gs = GoalSprite(gx, gy, index=len(goals))
+                                        goal_sprites.add(gs)
+                                        goal_sprite_map[(int(gx), int(gy))] = gs
+                                        # mark temporary so it will be removed later
+                                        temp_goal_timers[(int(gx), int(gy))] = POWERUP_DURATION_FRAMES
+                                        # spawn some particles so player notices
+                                        for _p in range(10):
+                                            particles.add(SporeParticle(gx, gy))
+                                        spawned += 1
+                                        placed = True
+                                        break
+                                if not placed:
+                                    # couldn't place this one; continue to next
+                                    continue
+                            # Activate full-screen soft green overlay for the duration
+                            globals()['cluster_overlay_timer'] = POWERUP_DURATION_FRAMES
+                            if spawned == 0:
+                                print("Cluster cap used but no safe spawn locations found near", center_x, center_y)
+                            else:
+                                print(f"Cluster cap spawned {spawned} temporary goals near ({center_x},{center_y})")
+                        # immediate feedback print
+                        print(f"Used {k}; remaining: {inventory.get(k,0)}")
         if event.type == pygame.KEYDOWN:
             if event.key == pygame.K_SPACE and mushroom_ball.stopped and not level_complete:  # Shoot if stopped
                 # Get mouse world pos
@@ -755,15 +950,17 @@ while running:
     else:
         # Handle input (arrow keys or WASD for player)
         keys = pygame.key.get_pressed()
+        # Apply runtime player movement multiplier (allows velocity powerup to speed player)
+        cur_speed = PLAYER_SPEED * (player_speed_multiplier if player_speed_multiplier else 1.0)
         new_x, new_y = player_pos[0], player_pos[1]
         if keys[pygame.K_LEFT] or keys[pygame.K_a]:
-            new_x -= PLAYER_SPEED
+            new_x -= cur_speed
         if keys[pygame.K_RIGHT] or keys[pygame.K_d]:
-            new_x += PLAYER_SPEED
+            new_x += cur_speed
         if keys[pygame.K_UP] or keys[pygame.K_w]:
-            new_y -= PLAYER_SPEED
+            new_y -= cur_speed
         if keys[pygame.K_DOWN] or keys[pygame.K_s]:
-            new_y += PLAYER_SPEED
+            new_y += cur_speed
 
         # Clamp proposed move to world bounds
         new_x = max(player_radius, min(new_x, WORLD_WIDTH - player_radius))
@@ -795,12 +992,163 @@ while running:
         # Update pop-ups
         popups = [p for p in popups if p.update()]
 
+        # Update powerup timers and apply runtime flags
+        # Decrement timers
+        for k in list(powerup_timers.keys()):
+            if powerup_timers[k] > 0:
+                powerup_timers[k] -= 1
+
+        # Decrement temporary goal timers and remove expired temporary goals
+        for key in list(temp_goal_timers.keys()):
+            temp_goal_timers[key] -= 1
+            if temp_goal_timers[key] <= 0:
+                gx, gy = key
+                # remove matching goal from goals list
+                goals[:] = [g for g in goals if not (int(g[0]) == gx and int(g[1]) == gy)]
+                gs = goal_sprite_map.pop((gx, gy), None)
+                if gs:
+                    try:
+                        gs.kill()
+                    except Exception:
+                        pass
+                del temp_goal_timers[key]
+
+        # Decrement cluster overlay timer
+        if globals().get('cluster_overlay_timer', 0) > 0:
+            globals()['cluster_overlay_timer'] -= 1
+        # Aura auto-collect: if aura is active, collect nearby goals once per frame
+        if powerup_timers.get('aura_alembic', 0) > 0:
+            aura_collect()
+
+        # Apply shoot & movement speed multipliers if velocity_vial active
+        if powerup_timers.get('velocity_vial', 0) > 0:
+            shoot_speed_multiplier = 2.0
+            player_speed_multiplier = 2.0
+        else:
+            shoot_speed_multiplier = 1.0
+            player_speed_multiplier = 1.0
+
+        # golden_gleam is handled inside check_goal_hit via powerup_timers
+
     # Update camera to follow player/ball
     update_camera()
 
     # Draw: Viewport from world
     src_rect = pygame.Rect(cam_x, cam_y, SCREEN_WIDTH, SCREEN_HEIGHT)
     screen.blit(map_image, (0, 0), src_rect)  # Background map viewport ONLY
+
+    # If cluster overlay active, draw a soft green tint over the entire screen
+    if globals().get('cluster_overlay_timer', 0) > 0:
+        # alpha pulses slightly for visual interest
+        rem = globals().get('cluster_overlay_timer', 0)
+        frac = rem / float(POWERUP_DURATION_FRAMES)
+        # alpha ranges 120 -> 60 as it expires
+        alpha = int(120 * frac + 60 * (1 - frac))
+        overlay = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
+        overlay.fill((60, 200, 80, max(30, min(180, alpha))))
+        screen.blit(overlay, (0, 0))
+    # If golden gleam active, draw a soft yellow tint over the screen
+    if powerup_timers.get('golden_gleam', 0) > 0:
+        rem = powerup_timers.get('golden_gleam', 0)
+        frac = rem / float(POWERUP_DURATION_FRAMES)
+        # alpha ranges 100 -> 40 as it expires
+        alpha = int(100 * frac + 40 * (1 - frac))
+        y_overlay = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
+        y_overlay.fill((255, 220, 100, max(20, min(180, alpha))))
+        screen.blit(y_overlay, (0, 0))
+        # small 'DOUBLE' label top-center while active
+        try:
+            lbl = big_font.render("DOUBLE SCORE", True, (255, 240, 180))
+            lbl_rect = lbl.get_rect(center=(SCREEN_WIDTH//2, 40))
+            # draw faint dark outline
+            outline = pygame.Surface((lbl_rect.width+8, lbl_rect.height+8), pygame.SRCALPHA)
+            outline.fill((0,0,0,100))
+            screen.blit(outline, (lbl_rect.x-4, lbl_rect.y-4))
+            screen.blit(lbl, lbl_rect)
+        except Exception:
+            pass
+    # If velocity vial active, draw a soft blue tint over the screen
+    if powerup_timers.get('velocity_vial', 0) > 0:
+        rem = powerup_timers.get('velocity_vial', 0)
+        frac = rem / float(POWERUP_DURATION_FRAMES)
+        # alpha ranges 140 -> 50 as it expires
+        alpha = int(140 * frac + 50 * (1 - frac))
+        b_overlay = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
+        b_overlay.fill((100, 150, 255, max(20, min(220, alpha))))
+        screen.blit(b_overlay, (0, 0))
+        # small 'SPEED' label top-center while active
+        try:
+            lbl = big_font.render("SPEED", True, (220, 240, 255))
+            lbl_rect = lbl.get_rect(center=(SCREEN_WIDTH//2, 40))
+            # faint outline
+            outline = pygame.Surface((lbl_rect.width+8, lbl_rect.height+8), pygame.SRCALPHA)
+            outline.fill((0,0,0,80))
+            screen.blit(outline, (lbl_rect.x-4, lbl_rect.y-4))
+            screen.blit(lbl, lbl_rect)
+        except Exception:
+            pass
+    # If aura alembic active, draw a soft purple tint + lavender aura circle around player
+    # Add a faint pulse (subtle radius + alpha modulation) to make the aura more visible
+    if powerup_timers.get('aura_alembic', 0) > 0:
+        rem = powerup_timers.get('aura_alembic', 0)
+        frac = rem / float(POWERUP_DURATION_FRAMES)
+        alpha = int(110 * frac + 40 * (1 - frac))
+        p_overlay = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
+        p_overlay.fill((160, 120, 200, max(20, min(200, alpha))))
+        screen.blit(p_overlay, (0, 0))
+        # draw lavender aura circle around player (screen center) with stronger visibility + pulsing
+        try:
+            aura_screen_x = SCREEN_WIDTH // 2
+            aura_screen_y = SCREEN_HEIGHT // 2
+            # base pixel radius scaled from world radius, increase scale so it's larger on screen
+            # previous scaling could be very small on large maps; amplify by 1.6
+            base_px = int(AURA_RADIUS * (SCREEN_WIDTH / float(WORLD_WIDTH)) * 1.6)
+            # time-based pulse (seconds)
+            t = pygame.time.get_ticks() / 1000.0
+            # pulse frequency in Hz and amplitude scaled by remaining fraction
+            freq = 0.9  # ~0.9 Hz (one pulse ~1.1s)
+            amp = 0.12 * frac  # larger amplitude (~±12% radius) when fresh, fades with timer
+            pulse = math.sin(t * 2.0 * math.pi * freq)
+            # modulated radius (keep subtle but more visible)
+            aura_radius_px = max(6, int(base_px * (1.0 + amp * pulse)))
+
+            # stronger base alphas to improve visibility
+            fill_base = 90
+            outline_base = 220
+            # modulate alpha slightly with pulse and remaining timer
+            fill_alpha = int(max(12, min(230, fill_base * (1.0 + 0.28 * pulse) * frac)))
+            outline_alpha = int(max(50, min(255, outline_base * (1.0 + 0.45 * pulse) * frac)))
+
+            # Create aura surface sized for the current pulsed radius
+            aura_surf = pygame.Surface((aura_radius_px * 2 + 20, aura_radius_px * 2 + 20), pygame.SRCALPHA)
+            center = (aura_radius_px + 10, aura_radius_px + 10)
+            # soft filled circle (higher alpha)
+            pygame.draw.circle(aura_surf, (220, 200, 255, fill_alpha), center, aura_radius_px)
+
+            # outer glow: larger, faint but more visible
+            glow_r = int(aura_radius_px * 1.3)
+            try:
+                glow_alpha = int(max(10, min(200, fill_alpha * 0.6)))
+                pygame.draw.circle(aura_surf, (230, 210, 255, glow_alpha), center, glow_r)
+            except Exception:
+                pass
+
+            # main strong outline
+            pygame.draw.circle(aura_surf, (200, 180, 255, outline_alpha), center, aura_radius_px, 4)
+
+            # Add a faint expanding/contracting outer ring to draw attention
+            ring_amp = 0.06 * frac
+            ring_r = int(aura_radius_px * (1.0 + ring_amp * math.cos(t * 2.0 * math.pi * (freq * 0.6))))
+            ring_alpha = int(max(8, min(120, 80 * frac * (1.0 + 0.8 * pulse))))
+            try:
+                pygame.draw.circle(aura_surf, (210, 190, 255, ring_alpha), center, ring_r, 2)
+            except Exception:
+                pass
+
+            # blit centered on player screen position
+            screen.blit(aura_surf, (aura_screen_x - aura_radius_px - 10, aura_screen_y - aura_radius_px - 10))
+        except Exception:
+            pass
 
     # Draw particles (world -> screen offset)
     for p in list(particles):
@@ -873,6 +1221,33 @@ while running:
     # Info/UI with score (don't display the word 'Streak' at the top; streak counter still used internally)
     info = font.render(f"Pos: ({int(player_pos[0])}, {int(player_pos[1])}) | Score: {score} | Goals left: {len(goals)} | SPACE to shoot! R to reset", True, (255, 255, 255))
     screen.blit(info, (10, 10))
+    # Draw purchased powerups as icons at bottom-left; clicking uses them
+    # powerup_slots was computed at top of loop
+    for slot in powerup_slots:
+        r = slot['rect']
+        # background card
+        pygame.draw.rect(screen, (40, 40, 40), r)
+        pygame.draw.rect(screen, (120, 120, 120), r, 2)
+        # icon
+        key = slot['key']
+        img = powerup_images.get(key)
+        if img:
+            img_r = img.get_rect(center=(r.x + 28, r.y + 28))
+            screen.blit(img, img_r)
+        # count badge
+        cnt = slot['count']
+        badge_pos = (r.right - 10, r.y + 10)
+        pygame.draw.circle(screen, (0, 200, 0), badge_pos, 10)
+        ct = font.render(str(cnt), True, (0, 0, 0))
+        ct_r = ct.get_rect(center=badge_pos)
+        screen.blit(ct, ct_r)
+        # if active, draw remaining seconds indicator (small bar)
+        t = powerup_timers.get(key, 0)
+        if t > 0:
+            secs = int(math.ceil(t / float(FPS)))
+            sec_text = font.render(f"{secs}s", True, (255, 255, 0))
+            st_r = sec_text.get_rect(center=(r.centerx, r.y - 10))
+            screen.blit(sec_text, st_r)
     if level_complete:
         win_text = big_font.render("LEVEL COMPLETE! Final Score: " + str(score), True, (255, 255, 0))
         screen.blit(win_text, (SCREEN_WIDTH//2 - win_text.get_width()//2, SCREEN_HEIGHT//2))
