@@ -166,6 +166,16 @@ info_text = Text(
     background=True
 )
 
+# Score display
+score = 0
+score_text = Text(
+    text='Mushroom Coins collected: 0',
+    position=(-0.5, 0.35),
+    scale=1.2,
+    origin=(0, 0),
+    background=True
+)
+
 # Zoom level indicator
 zoom_indicator = Text(
     text=f'Height: {int(camera.y)}',
@@ -175,9 +185,32 @@ zoom_indicator = Text(
     background=True
 )
 
+def check_coin_collection(coin, player):
+    # Calculate distance between player and coin
+    distance = (coin.position - player.position).length()
+    # If player is close enough to coin (within 1 unit)
+    return distance < 1
+
 def update():
+    global score
     # Update coin animation
     update_coin_animation()
+    
+    # Check coin collection
+    if red_coin.enabled and check_coin_collection(red_coin, player):
+        red_coin.enabled = False
+        score += 1
+        score_text.text = f'Mushroom Coins collected: {score}'
+        
+    if green_coin.enabled and check_coin_collection(green_coin, player):
+        green_coin.enabled = False
+        score += 1
+        score_text.text = f'Mushroom Coins collected: {score}'
+        
+    if blue_coin.enabled and check_coin_collection(blue_coin, player):
+        blue_coin.enabled = False
+        score += 1
+        score_text.text = f'Mushroom Coins collected: {score}'
     
     # WASD movement for player
     move_direction = Vec3(0, 0, 0)
