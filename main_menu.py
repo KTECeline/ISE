@@ -10,12 +10,12 @@ from random import uniform, randint
 # -------------------------
 # Configuration
 # -------------------------
-BG_PATH = r"C:\Users\Xdimt\Downloads\background.img.png"  # user-specified
-STORY_BG_PATH = r"C:\Users\Xdimt\Downloads\story_background.png"  # story background
-FONT_PATH = os.path.join("assets", "fonts", "skooled_serif.ttf")  # optional
-HOVER_SFX = r"C:\Users\Xdimt\Downloads\Hover.mp3"  # Updated path
-CLICK_SFX = r"C:\Users\Xdimt\Downloads\Click.mp3"  # Updated path
-MUSIC_PATH = r"C:\Users\Xdimt\Downloads\Background_music.mp3"  # Updated path
+BG_PATH = r"assets/images/background.img.png"
+STORY_BG_PATH = r"assets/images/story_background.png"
+FONT_PATH = os.path.join("assets", "fonts", "skooled_serif.ttf")
+HOVER_SFX = r"assets/sounds/Hover.mp3"
+CLICK_SFX = r"assets/sounds/Click.mp3"
+MUSIC_PATH = r"assets/sounds/Background_music.mp3"
 
 SCREEN_WIDTH = 1280
 SCREEN_HEIGHT = 720
@@ -24,14 +24,15 @@ FPS = 60
 # Colors
 WHITE = (255, 255, 255)
 BLACK = (0, 0, 0)
-NEON_GREEN = (0, 255, 136)           # hover glow color
-DARK_MOSS_OUTLINE = (26, 46, 26)     # title outline (#1a2e1a)
-BUTTON_BASE = (42, 61, 42)           # darker base (#2a3d2a)
+NEON_GREEN = (0, 255, 136)
+DARK_MOSS_OUTLINE = (26, 46, 26)
+BUTTON_BASE = (42, 61, 42)
 BUTTON_TOP = (70, 92, 70)
 BUTTON_BOTTOM = (40, 58, 40)
 BUTTON_BORDER = (20, 36, 20)
 STATS_COLOR = (220, 230, 220)
-STORY_TEXT_COLOR = (220, 240, 220)   # Light green for story text
+STORY_TEXT_COLOR = (220, 240, 220)
+LORE_TEXT_COLOR = (180, 220, 180)  # Slightly different color for lore text
 
 # Buttons layout
 BUTTON_W = 420
@@ -44,12 +45,46 @@ BUTTON_SPACING = 96
 NUM_SPORES = 70
 SPORE_COLOR = (200, 255, 170)
 
-# Story text
+# Updated Story text with Mycelium's Lament lore
 STORY_LINES = [
-    "You awaken in the Fungal Wastes — the air thick with spores and echoes of lost souls.",
-    "The mushrooms pulse faintly, whispering of secrets buried deep below.",
-    "To survive here, you must learn to listen... to the forest, and to yourself.",
+    "In the ancient fungal realm of Echofungus...",
+    "A vast underground world woven from mycelial threads",
+    "and spore-veiled caverns...",
+    "",
+    "Life pulses through symbiotic cycles",
+    "of decay and rebirth...",
+    "",
+    "But a cataclysmic Blightstorm fractures the realm...",
+    "Guardian monsters starve...",
+    "The void encroaches...",
+    "",
+    "You are a Surface Echo...",
+    "A rare wanderer from the barren above-world...",
+    "Drawn by Hyphara's call to restore balance...",
+    "",
     "Your journey begins now."
+]
+
+# Wise Mushroom dialogue
+WM_DIALOGUE = [
+    "Is that a visitor I see? A rare sight indeed...",
+    "We haven't had one in a while.",
+    "",
+    "A quiet one, hmm. Mind if you tell me your name?",
+    "Or at least write it down...",
+    "",
+    "I am Eldergill, last of the Rootbound Sages.",
+    "The Blightstorm rages below—our guardians starve,",
+    "and the mycelial web unravels.",
+    "",
+    "Hyphara dreams of a feeder from above.",
+    "Will you descend? Prove your weave?",
+    "",
+    "The soil hungers, young Echo.",
+    "Gather the gifts of decay—feed the maws to pass.",
+    "Fail, and the void claims us all.",
+    "",
+    "Go now... the Fungal Waste awaits."
 ]
 
 # -------------------------
@@ -64,7 +99,7 @@ except Exception as e:
     mixer_ok = False
 
 screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
-pygame.display.set_caption("Fungal Wastes")
+pygame.display.set_caption("Mycelium's Lament")  # Updated game title
 clock = pygame.time.Clock()
 
 # ensure asset dirs
@@ -108,7 +143,8 @@ def load_font(path, size, fallback_name=None):
 title_font = load_font(FONT_PATH, 86, fallback_name="Georgia")
 button_font = load_font(FONT_PATH, 36, fallback_name="Arial")
 small_font = load_font(FONT_PATH, 18, fallback_name="Arial")
-story_font = load_font(FONT_PATH, 32, fallback_name="Georgia")  # Font for story text
+story_font = load_font(FONT_PATH, 32, fallback_name="Georgia")
+dialogue_font = load_font(FONT_PATH, 28, fallback_name="Georgia")  # Font for WM dialogue
 
 # -------------------------
 # Sounds (optional)
@@ -139,7 +175,17 @@ def load_game_data():
                 return json.load(f)
         except Exception as e:
             print("[WARN] Could not read game_data.json:", e)
-    return {"score":0,"lives":3,"mushrooms":0,"current_level":1,"inventory":{},"unlocked_levels":[1]}
+    return {
+        "player_name": "",
+        "score": 0,
+        "lives": 3,
+        "mushrooms": 0,
+        "current_level": 1,
+        "inventory": {},
+        "unlocked_levels": [1],
+        "symbiote_shrooms": 0,
+        "spore_credits": 0
+    }
 
 def save_game_data(data):
     try:
@@ -258,12 +304,14 @@ class Button:
 # Story scene typing effect
 # -------------------------
 class StoryTypingEffect:
-    def __init__(self, lines):
+    def __init__(self, lines, font, color=STORY_TEXT_COLOR):
         self.lines = lines
+        self.font = font
+        self.color = color
         self.current_line = 0
         self.current_char = 0
         self.last_update_time = 0
-        self.char_delay = 35  # ms between characters
+        self.char_delay = 45  # ms between characters
         self.line_delay = 1200  # ms between lines
         self.finished = False
         self.waiting_for_next = False
@@ -306,14 +354,67 @@ class StoryTypingEffect:
         return self.finished
 
 # -------------------------
+# Name input system
+# -------------------------
+class NameInput:
+    def __init__(self):
+        self.text = ""
+        self.active = True
+        self.cursor_visible = True
+        self.cursor_timer = 0
+        
+    def update(self, dt):
+        self.cursor_timer += dt
+        if self.cursor_timer > 500:  # Blink every 500ms
+            self.cursor_visible = not self.cursor_visible
+            self.cursor_timer = 0
+            
+    def handle_event(self, event):
+        if event.type == pygame.KEYDOWN:
+            if event.key == pygame.K_RETURN:
+                if self.text.strip():
+                    self.active = False
+                    return True
+            elif event.key == pygame.K_BACKSPACE:
+                self.text = self.text[:-1]
+            else:
+                # Limit name length and only allow alphanumeric
+                if len(self.text) < 12 and event.unicode.isalnum():
+                    self.text += event.unicode
+        return False
+        
+    def draw(self, surf, position):
+        # Draw input box
+        input_rect = pygame.Rect(position[0] - 150, position[1] - 20, 300, 40)
+        pygame.draw.rect(surf, (40, 60, 40), input_rect, border_radius=5)
+        pygame.draw.rect(surf, (80, 120, 80), input_rect, 2, border_radius=5)
+        
+        # Draw text
+        if self.text:
+            name_text = dialogue_font.render(self.text, True, WHITE)
+            surf.blit(name_text, (input_rect.x + 10, input_rect.y + 5))
+        else:
+            prompt_text = small_font.render("Enter your name...", True, (150, 150, 150))
+            surf.blit(prompt_text, (input_rect.x + 10, input_rect.y + 10))
+            
+        # Draw cursor
+        if self.active and self.cursor_visible:
+            cursor_x = input_rect.x + 10 + (dialogue_font.size(self.text)[0] if self.text else 0)
+            pygame.draw.rect(surf, WHITE, (cursor_x, input_rect.y + 5, 2, 30))
+
+# -------------------------
 # Scenes & callbacks
 # -------------------------
 def start_game_cb():
-    set_scene_with_fade("story")
+    set_scene_with_fade("story_intro")
 
 def start_level_1():
     if os.path.exists("level_1.py"):
         try:
+            # Update game data before starting level
+            game_data["current_level"] = 1
+            save_game_data(game_data)
+            
             subprocess.run([sys.executable, "level_1.py"])
             # If we return from level_1, go back to main menu
             set_scene_with_fade("menu")
@@ -366,7 +467,9 @@ level2_buttons = [
 # scene state
 current_scene = "menu"
 scene_fade = {"active": False, "alpha": 0, "dir": 0, "target": None}
-story_typing = StoryTypingEffect(STORY_LINES)
+story_typing = StoryTypingEffect(STORY_LINES, story_font)
+wm_dialogue = StoryTypingEffect(WM_DIALOGUE, dialogue_font, LORE_TEXT_COLOR)
+name_input = NameInput()
 
 # -------------------------
 # Drawing helpers
@@ -390,102 +493,6 @@ def visible_buttons_list():
     if current_scene == "level2":
         return level2_buttons
     return []
-
-# -------------------------
-# Scene render functions
-# -------------------------
-title_phase = 0.0
-fade_alpha = 255
-fade_speed = 2
-
-def render_menu(dt, mouse_pos):
-    for b in main_buttons:
-        b.update(dt, mouse_pos)
-    screen.blit(background, (0,0))
-    v = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
-    pygame.draw.rect(v, (0,0,0,60), v.get_rect())
-    screen.blit(v, (0,0), special_flags=pygame.BLEND_RGBA_SUB)
-    for s in spores: s.draw(screen)
-    global title_phase
-    title_phase += 0.02 * (dt/16.0)
-    draw_centered_title(screen, "FUNGAL WASTES", title_font, (200,245,200), DARK_MOSS_OUTLINE, SCREEN_WIDTH//2, 160)
-    # stats
-    stats = [
-        f"Score: {game_data.get('score',0)}",
-        f"Lives: {game_data.get('lives',0)}",
-        f"Mushrooms: {game_data.get('mushrooms',0)}",
-        f"Level: {game_data.get('current_level',1)}"
-    ]
-    for i, t in enumerate(stats):
-        screen.blit(small_font.render(t, True, STATS_COLOR), (48, 220 + i*28))
-    for b in main_buttons: b.draw(screen)
-    footer = small_font.render("Developed by G23", True, WHITE)  # Updated
-    screen.blit(footer, footer.get_rect(center=(SCREEN_WIDTH//2, SCREEN_HEIGHT-28)))
-
-def render_options(dt, mouse_pos):
-    for b in opt_buttons: b.update(dt, mouse_pos)
-    screen.blit(background, (0,0))
-    v = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
-    pygame.draw.rect(v, (0,0,0,60), v.get_rect())
-    screen.blit(v, (0,0), special_flags=pygame.BLEND_RGBA_SUB)
-    for s in spores: s.draw(screen)
-    draw_centered_title(screen, "OPTIONS", title_font, (210,240,210), DARK_MOSS_OUTLINE, SCREEN_WIDTH//2, 140)
-    for b in opt_buttons: b.draw(screen)
-    footer = small_font.render("Developed by G23", True, WHITE)  # Updated
-    screen.blit(footer, footer.get_rect(center=(SCREEN_WIDTH//2, SCREEN_HEIGHT-28)))
-
-def render_marketplace(dt, mouse_pos):
-    for b in market_buttons: b.update(dt, mouse_pos)
-    screen.blit(background, (0,0))
-    for s in spores: s.draw(screen)
-    draw_centered_title(screen, "MARKETPLACE", title_font, (210,240,210), DARK_MOSS_OUTLINE, SCREEN_WIDTH//2, 140)
-    info = small_font.render("Marketplace coming soon. Use Back to return.", True, STATS_COLOR)
-    screen.blit(info, info.get_rect(center=(SCREEN_WIDTH//2, SCREEN_HEIGHT//2)))
-    for b in market_buttons: b.draw(screen)
-    footer = small_font.render("Developed by G23", True, WHITE)  # Updated
-    screen.blit(footer, footer.get_rect(center=(SCREEN_WIDTH//2, SCREEN_HEIGHT-28)))
-
-def render_level2(dt, mouse_pos):
-    for b in level2_buttons: b.update(dt, mouse_pos)
-    screen.fill((8,14,10))
-    draw_centered_title(screen, "LEVEL 2 - WASTELAND", title_font, (200,230,200), DARK_MOSS_OUTLINE, SCREEN_WIDTH//2, 140)
-    info = small_font.render("Level 2 placeholder. Press Back to return.", True, STATS_COLOR)
-    screen.blit(info, info.get_rect(center=(SCREEN_WIDTH//2, SCREEN_HEIGHT//2)))
-    for b in level2_buttons: b.draw(screen)
-    footer = small_font.render("Developed by G23", True, WHITE)  # Updated
-    screen.blit(footer, footer.get_rect(center=(SCREEN_WIDTH//2, SCREEN_HEIGHT-28)))
-
-def render_story(dt, mouse_pos, current_time):
-    screen.blit(story_background, (0,0))
-    
-    # Add dark overlay for better text readability
-    overlay = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
-    overlay.fill((0, 0, 0, 120))  # Semi-transparent black
-    screen.blit(overlay, (0, 0))
-    
-    # Update typing effect
-    global story_typing
-    story_typing.update(current_time)
-    
-    # Draw current text
-    current_text = story_typing.get_current_text()
-    if current_text:
-        # Render text with word wrapping
-        text_surface = render_text_with_wrapping(current_text, story_font, STORY_TEXT_COLOR, SCREEN_WIDTH - 200)
-        text_rect = text_surface.get_rect(center=(SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2))
-        screen.blit(text_surface, text_rect)
-        
-        # Show "Continue" prompt if waiting for next line
-        if story_typing.waiting_for_next and not story_typing.finished:
-            prompt = small_font.render("Click or press any key to continue...", True, (200, 200, 200))
-            prompt_rect = prompt.get_rect(center=(SCREEN_WIDTH // 2, SCREEN_HEIGHT - 100))
-            screen.blit(prompt, prompt_rect)
-    
-    # If story is complete, show final prompt and transition after delay
-    if story_typing.is_complete():
-        prompt = small_font.render("Click or press any key to begin your journey...", True, (200, 200, 200))
-        prompt_rect = prompt.get_rect(center=(SCREEN_WIDTH // 2, SCREEN_HEIGHT - 100))
-        screen.blit(prompt, prompt_rect)
 
 def render_text_with_wrapping(text, font, color, max_width):
     words = text.split(' ')
@@ -520,10 +527,159 @@ def render_text_with_wrapping(text, font, color, max_width):
     return surface
 
 # -------------------------
+# Scene render functions
+# -------------------------
+title_phase = 0.0
+fade_alpha = 255
+fade_speed = 2
+
+def render_menu(dt, mouse_pos):
+    for b in main_buttons:
+        b.update(dt, mouse_pos)
+    screen.blit(background, (0,0))
+    v = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
+    pygame.draw.rect(v, (0,0,0,60), v.get_rect())
+    screen.blit(v, (0,0), special_flags=pygame.BLEND_RGBA_SUB)
+    for s in spores: s.draw(screen)
+    global title_phase
+    title_phase += 0.02 * (dt/16.0)
+    draw_centered_title(screen, "MYCELIUM'S LAMENT", title_font, (200,245,200), DARK_MOSS_OUTLINE, SCREEN_WIDTH//2, 160)  # Updated title
+    # stats
+    stats = [
+        f"Score: {game_data.get('score',0)}",
+        f"Lives: {game_data.get('lives',0)}",
+        f"Mushrooms: {game_data.get('mushrooms',0)}",
+        f"Level: {game_data.get('current_level',1)}",
+        f"Player: {game_data.get('player_name', 'Unknown')}"
+    ]
+    for i, t in enumerate(stats):
+        screen.blit(small_font.render(t, True, STATS_COLOR), (48, 220 + i*28))
+    for b in main_buttons: b.draw(screen)
+    footer = small_font.render("Developed by G23", True, WHITE)
+    screen.blit(footer, footer.get_rect(center=(SCREEN_WIDTH//2, SCREEN_HEIGHT-28)))
+
+def render_options(dt, mouse_pos):
+    for b in opt_buttons: b.update(dt, mouse_pos)
+    screen.blit(background, (0,0))
+    v = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
+    pygame.draw.rect(v, (0,0,0,60), v.get_rect())
+    screen.blit(v, (0,0), special_flags=pygame.BLEND_RGBA_SUB)
+    for s in spores: s.draw(screen)
+    draw_centered_title(screen, "OPTIONS", title_font, (210,240,210), DARK_MOSS_OUTLINE, SCREEN_WIDTH//2, 140)
+    for b in opt_buttons: b.draw(screen)
+    footer = small_font.render("Developed by G23", True, WHITE)
+    screen.blit(footer, footer.get_rect(center=(SCREEN_WIDTH//2, SCREEN_HEIGHT-28)))
+
+def render_marketplace(dt, mouse_pos):
+    for b in market_buttons: b.update(dt, mouse_pos)
+    screen.blit(background, (0,0))
+    for s in spores: s.draw(screen)
+    draw_centered_title(screen, "MARKETPLACE", title_font, (210,240,210), DARK_MOSS_OUTLINE, SCREEN_WIDTH//2, 140)
+    info = small_font.render("Marketplace coming soon. Use Back to return.", True, STATS_COLOR)
+    screen.blit(info, info.get_rect(center=(SCREEN_WIDTH//2, SCREEN_HEIGHT//2)))
+    for b in market_buttons: b.draw(screen)
+    footer = small_font.render("Developed by G23", True, WHITE)
+    screen.blit(footer, footer.get_rect(center=(SCREEN_WIDTH//2, SCREEN_HEIGHT-28)))
+
+def render_level2(dt, mouse_pos):
+    for b in level2_buttons: b.update(dt, mouse_pos)
+    screen.fill((8,14,10))
+    draw_centered_title(screen, "LEVEL 2 - CITY OF TEARS", title_font, (200,230,200), DARK_MOSS_OUTLINE, SCREEN_WIDTH//2, 140)
+    info = small_font.render("The City of Tears awaits... Press Back to return.", True, STATS_COLOR)
+    screen.blit(info, info.get_rect(center=(SCREEN_WIDTH//2, SCREEN_HEIGHT//2)))
+    for b in level2_buttons: b.draw(screen)
+    footer = small_font.render("Developed by G23", True, WHITE)
+    screen.blit(footer, footer.get_rect(center=(SCREEN_WIDTH//2, SCREEN_HEIGHT-28)))
+
+def render_story_intro(dt, mouse_pos, current_time):
+    screen.blit(story_background, (0,0))
+    
+    # Add dark overlay for better text readability
+    overlay = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
+    overlay.fill((0, 0, 0, 120))
+    screen.blit(overlay, (0, 0))
+    
+    # Update typing effect
+    global story_typing
+    story_typing.update(current_time)
+    
+    # Draw current text
+    current_text = story_typing.get_current_text()
+    if current_text:
+        # Render text with word wrapping
+        text_surface = render_text_with_wrapping(current_text, story_font, STORY_TEXT_COLOR, SCREEN_WIDTH - 200)
+        text_rect = text_surface.get_rect(center=(SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2))
+        screen.blit(text_surface, text_rect)
+        
+        # Show "Continue" prompt if waiting for next line
+        if story_typing.waiting_for_next and not story_typing.finished:
+            prompt = small_font.render("Click or press any key to continue...", True, (200, 200, 200))
+            prompt_rect = prompt.get_rect(center=(SCREEN_WIDTH // 2, SCREEN_HEIGHT - 100))
+            screen.blit(prompt, prompt_rect)
+    
+    # If story is complete, show final prompt and transition after delay
+    if story_typing.is_complete():
+        prompt = small_font.render("Click or press any key to meet Eldergill...", True, (200, 200, 200))
+        prompt_rect = prompt.get_rect(center=(SCREEN_WIDTH // 2, SCREEN_HEIGHT - 100))
+        screen.blit(prompt, prompt_rect)
+
+def render_wm_dialogue(dt, mouse_pos, current_time):
+    screen.blit(story_background, (0,0))
+    
+    # Add dark overlay for better text readability
+    overlay = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
+    overlay.fill((0, 0, 0, 120))
+    screen.blit(overlay, (0, 0))
+    
+    # Draw Wise Mushroom title
+    wm_title = story_font.render("Eldergill - The Rootbound Sage", True, LORE_TEXT_COLOR)
+    screen.blit(wm_title, wm_title.get_rect(center=(SCREEN_WIDTH // 2, 100)))
+    
+    # Update typing effect
+    global wm_dialogue, name_input
+    if not name_input.active:
+        wm_dialogue.update(current_time)
+    
+    # Handle name input
+    if name_input.active:
+        name_input.update(dt)
+        
+        # Draw prompt for name
+        name_prompt = dialogue_font.render("What shall we call you, Surface Echo?", True, LORE_TEXT_COLOR)
+        screen.blit(name_prompt, name_prompt.get_rect(center=(SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2 - 60)))
+        
+        # Draw name input box
+        name_input.draw(screen, (SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2))
+        
+        # Draw instruction
+        instruction = small_font.render("Press ENTER when finished", True, (200, 200, 200))
+        screen.blit(instruction, instruction.get_rect(center=(SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2 + 40)))
+    else:
+        # Draw current dialogue text
+        current_text = wm_dialogue.get_current_text()
+        if current_text:
+            # Render text with word wrapping
+            text_surface = render_text_with_wrapping(current_text, dialogue_font, LORE_TEXT_COLOR, SCREEN_WIDTH - 200)
+            text_rect = text_surface.get_rect(center=(SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2))
+            screen.blit(text_surface, text_rect)
+            
+            # Show "Continue" prompt if waiting for next line
+            if wm_dialogue.waiting_for_next and not wm_dialogue.finished:
+                prompt = small_font.render("Click or press any key to continue...", True, (200, 200, 200))
+                prompt_rect = prompt.get_rect(center=(SCREEN_WIDTH // 2, SCREEN_HEIGHT - 100))
+                screen.blit(prompt, prompt_rect)
+    
+    # If dialogue is complete, show final prompt to start the game
+    if wm_dialogue.is_complete():
+        prompt = small_font.render("Click or press any key to begin your journey in the Fungal Waste...", True, (200, 200, 200))
+        prompt_rect = prompt.get_rect(center=(SCREEN_WIDTH // 2, SCREEN_HEIGHT - 100))
+        screen.blit(prompt, prompt_rect)
+
+# -------------------------
 # Main loop
 # -------------------------
 def main_loop():
-    global fade_alpha, current_scene, scene_fade, story_typing
+    global fade_alpha, current_scene, scene_fade, story_typing, wm_dialogue, name_input, game_data
     running = True
     last = pygame.time.get_ticks()
     while running:
@@ -538,14 +694,24 @@ def main_loop():
                 running = False
             elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                 mouse_pos = pygame.mouse.get_pos()
-                if current_scene == "story":
+                if current_scene == "story_intro":
                     # Handle story scene click
                     if story_typing.is_complete():
-                        # Story finished, start the game
-                        start_level_1()
+                        # Story finished, transition to WM dialogue
+                        set_scene_with_fade("wm_dialogue")
                     else:
                         # Skip to next line or complete current line
                         story_typing.skip_or_next()
+                elif current_scene == "wm_dialogue":
+                    if name_input.active:
+                        # Name input is active, don't advance dialogue on click
+                        pass
+                    elif wm_dialogue.is_complete():
+                        # Dialogue finished, start the game
+                        start_level_1()
+                    else:
+                        # Skip to next line or complete current line
+                        wm_dialogue.skip_or_next()
                 else:
                     # Handle button clicks in other scenes
                     for b in visible_buttons_list():
@@ -555,14 +721,27 @@ def main_loop():
                 if event.key == pygame.K_ESCAPE:
                     save_game_data(game_data)
                     running = False
-                elif current_scene == "story":
+                elif current_scene == "story_intro":
                     # Handle story scene key press
                     if story_typing.is_complete():
-                        # Story finished, start the game
-                        start_level_1()
+                        # Story finished, transition to WM dialogue
+                        set_scene_with_fade("wm_dialogue")
                     else:
                         # Skip to next line or complete current line
                         story_typing.skip_or_next()
+                elif current_scene == "wm_dialogue":
+                    if name_input.active:
+                        # Handle name input
+                        if name_input.handle_event(event):
+                            # Name submitted, save it
+                            game_data["player_name"] = name_input.text
+                            save_game_data(game_data)
+                    elif wm_dialogue.is_complete():
+                        # Dialogue finished, start the game
+                        start_level_1()
+                    else:
+                        # Skip to next line or complete current line
+                        wm_dialogue.skip_or_next()
                 else:
                     # Handle keyboard navigation in other scenes
                     if event.key in (pygame.K_UP, pygame.K_w):
@@ -597,8 +776,11 @@ def main_loop():
                     # switch scene now
                     current_scene = scene_fade.get("target", current_scene)
                     # Reset story typing if entering story scene
-                    if current_scene == "story":
-                        story_typing = StoryTypingEffect(STORY_LINES)
+                    if current_scene == "story_intro":
+                        story_typing = StoryTypingEffect(STORY_LINES, story_font)
+                    elif current_scene == "wm_dialogue":
+                        wm_dialogue = StoryTypingEffect(WM_DIALOGUE, dialogue_font, LORE_TEXT_COLOR)
+                        name_input = NameInput()
                     scene_fade["dir"] = -1
             elif scene_fade["dir"] == -1:
                 scene_fade["alpha"] = max(0, scene_fade["alpha"] - 8)
@@ -618,8 +800,10 @@ def main_loop():
         elif current_scene == "level2":
             for b in level2_buttons: b.update(dt, mouse_pos)
             render_level2(dt, mouse_pos)
-        elif current_scene == "story":
-            render_story(dt, mouse_pos, now)
+        elif current_scene == "story_intro":
+            render_story_intro(dt, mouse_pos, now)
+        elif current_scene == "wm_dialogue":
+            render_wm_dialogue(dt, mouse_pos, now)
 
         # draw fade overlays (initial menu fade or scene transitions)
         if scene_fade.get("active", False):
@@ -644,4 +828,3 @@ def main_loop():
 # Ensure there is an entry
 if __name__ == "__main__":
     main_loop()
-
