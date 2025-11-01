@@ -1,3 +1,8 @@
 # ISE
-type this in your terminal to downloaded all the needed packages
+
+Quick start
+1. Install runtime deps (if you use a virtualenv, activate it first):
+
+```bash
 pip install -r requirements.txt
+```
