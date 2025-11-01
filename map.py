@@ -2,6 +2,7 @@ import pygame
 import sys
 import random
 import math
+import json
 from level2.goal import walking_frames_right, hit_frames_right
 
 # Initialize Pygame
@@ -56,6 +57,42 @@ BALL_TRAIL_SCALE_DECAY = 0.95  # each older trail image is this scale of the nex
 MAP_PATH = 'assets/textures/map/Level_2_map.png'
 COLLISION_PATH = 'assets/textures/map/Level_2_collision.png'
 
+# ---------------- Inventory helpers & powerup config ----------------
+def load_inventory():
+    try:
+        with open('inventory.json', 'r') as f:
+            return json.load(f)
+    except FileNotFoundError:
+        return {}
+
+def save_inventory(inv):
+    try:
+        with open('inventory.json', 'w') as f:
+            json.dump(inv, f)
+    except Exception:
+        pass
+
+# Mapping of powerup keys to asset icons and display names
+POWERUP_INFO = {
+    'velocity_vial': {'img': 'speed1.png', 'name': 'Velocity Vial'},
+    'golden_gleam': {'img': 'gold1.png', 'name': 'Golden Gleam'},
+    'cluster_cap': {'img': 'magnet1.png', 'name': 'Cluster Cap'},
+    'aura_alembic': {'img': 'circle1.png', 'name': 'Aura Alembic'},
+}
+
+# Powerup runtime state (timers measured in frames)
+POWERUP_DURATION_FRAMES = int(6 * FPS)  # 6 seconds
+powerup_timers = {k: 0 for k in POWERUP_INFO.keys()}  # active effect timers
+# shoot speed multiplier used when velocity active
+shoot_speed_multiplier = 1.0
+# score multiplier when golden is active
+score_multiplier_active = 1
+# aura active flag handled via timer
+# cluster cap spawns extra goals immediately when used; timer kept for visual UI
+
+# Load persisted inventory
+inventory = load_inventory()
+
 # Load images (now safe after dummy display)
 try:
     map_image = pygame.image.load(MAP_PATH)
@@ -104,6 +141,19 @@ WORLD_HEIGHT = map_image.get_height()
 screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
 pygame.display.set_caption("Level 2: Sporeball Gauntlet - Goals Only Below y=4215!")
 clock = pygame.time.Clock()
+
+# Load small icon images for powerups (used in bottom-left UI)
+powerup_images = {}
+for key, info in POWERUP_INFO.items():
+    path = f"assets/characters/{info['img']}"
+    try:
+        surf = pygame.image.load(path).convert_alpha()
+        # scale to a consistent icon size
+        surf = pygame.transform.smoothscale(surf, (48, 48))
+    except Exception:
+        surf = pygame.Surface((48, 48), pygame.SRCALPHA)
+        surf.fill((100, 100, 100, 200))
+    powerup_images[key] = surf
 
 # Player setup in WORLD coordinates (start near ball for convenience)
 player_pos = [730.0, 8230.0]  # Near ball start
@@ -261,7 +311,10 @@ class MushroomBall:
         dy = target_pos[1] - start_pos[1]
         dist = math.sqrt(dx**2 + dy**2)
         if dist > 0:
-            self.vel = [ (dx / dist) * BALL_SPEED, (dy / dist) * BALL_SPEED ]
+            # respect any active velocity multiplier
+            global shoot_speed_multiplier
+            sp = BALL_SPEED * (shoot_speed_multiplier if shoot_speed_multiplier else 1.0)
+            self.vel = [ (dx / dist) * sp, (dy / dist) * sp ]
         self.pos = start_pos[:]
         self.active = True
         self.stopped = False
@@ -530,7 +583,10 @@ def check_goal_hit(ball_pos, ball_radius):
         dx = ball_pos[0] - goal[0]
         dy = ball_pos[1] - goal[1]
         dist = math.sqrt(dx**2 + dy**2)
-        if dist < GOAL_RADIUS + ball_radius:
+        # If aura powerup is active, effectively increase goal radius for auto-hit
+        aura_extra = 20 if powerup_timers.get('aura_alembic', 0) > 0 else 0
+        effective_goal_radius = GOAL_RADIUS + aura_extra
+        if dist < effective_goal_radius + ball_radius:
             gx, gy = goals[i][0], goals[i][1]
             hit_goals.append([gx, gy])
             hits_this_shot += 1
@@ -559,6 +615,10 @@ def check_goal_hit(ball_pos, ball_radius):
         else:
             # Two goals in one strike: e.g. BASE_SCORE*2*COMBO -> 10*2*2 = 40
             points = int(BASE_SCORE * hits_this_shot * COMBO_MULTIPLIER)
+        # If golden gleam is active, double points while its timer > 0
+        if powerup_timers.get('golden_gleam', 0) > 0:
+            points = int(points * 2)
+
         score += points
         streak += hits_this_shot  # Build streak on hit(s)
         mushroom_ball.hit_this_shot = True
@@ -727,9 +787,50 @@ level_complete = False
 font = pygame.font.SysFont(None, 24)
 big_font = pygame.font.SysFont(None, 48)
 while running:
+    # Build powerup slots (bottom-left) based on purchased counts
+    powerup_slots = []  # list of dicts: {key, rect, count}
+    base_x = 10
+    base_y = SCREEN_HEIGHT - 70
+    spacing = 64
+    idx = 0
+    for key in POWERUP_INFO.keys():
+        cnt = int(inventory.get(key, 0)) if inventory.get(key, 0) is not None else 0
+        if cnt > 0:
+            x = base_x + idx * spacing
+            r = pygame.Rect(x, base_y, 56, 56)
+            powerup_slots.append({'key': key, 'rect': r, 'count': cnt})
+            idx += 1
+
     for event in pygame.event.get():
         if event.type == pygame.QUIT:
             running = False
+        # Click on powerup slot to use it
+        if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+            mx, my = event.pos
+            for slot in powerup_slots:
+                if slot['rect'].collidepoint((mx, my)):
+                    k = slot['key']
+                    if inventory.get(k, 0) > 0 and powerup_timers.get(k, 0) == 0:
+                        # consume one
+                        inventory[k] = inventory.get(k, 0) - 1
+                        save_inventory(inventory)
+                        # activate effect for POWERUP_DURATION_FRAMES
+                        powerup_timers[k] = POWERUP_DURATION_FRAMES
+                        # apply immediate behaviors if needed
+                        if k == 'cluster_cap':
+                            # spawn 3 extra goals around ball position if safe
+                            spawned = 0
+                            for _ in range(3):
+                                gx = int(mushroom_ball.pos[0] + random.randint(-120, 120))
+                                gy = int(mushroom_ball.pos[1] + random.randint(-120, 120))
+                                if gy > FORBIDDEN_Y_MAX and not check_collision(gx, gy, GOAL_RADIUS):
+                                    goals.append([gx, gy])
+                                    gs = GoalSprite(gx, gy, index=len(goals))
+                                    goal_sprites.add(gs)
+                                    goal_sprite_map[(int(gx), int(gy))] = gs
+                                    spawned += 1
+                        # immediate feedback print
+                        print(f"Used {k}; remaining: {inventory.get(k,0)}")
         if event.type == pygame.KEYDOWN:
             if event.key == pygame.K_SPACE and mushroom_ball.stopped and not level_complete:  # Shoot if stopped
                 # Get mouse world pos
@@ -794,6 +895,20 @@ while running:
 
         # Update pop-ups
         popups = [p for p in popups if p.update()]
+
+        # Update powerup timers and apply runtime flags
+        # Decrement timers
+        for k in list(powerup_timers.keys()):
+            if powerup_timers[k] > 0:
+                powerup_timers[k] -= 1
+
+        # Apply shoot speed multiplier if velocity_vial active
+        if powerup_timers.get('velocity_vial', 0) > 0:
+            shoot_speed_multiplier = 1.5
+        else:
+            shoot_speed_multiplier = 1.0
+
+        # golden_gleam is handled inside check_goal_hit via powerup_timers
 
     # Update camera to follow player/ball
     update_camera()
@@ -873,6 +988,33 @@ while running:
     # Info/UI with score (don't display the word 'Streak' at the top; streak counter still used internally)
     info = font.render(f"Pos: ({int(player_pos[0])}, {int(player_pos[1])}) | Score: {score} | Goals left: {len(goals)} | SPACE to shoot! R to reset", True, (255, 255, 255))
     screen.blit(info, (10, 10))
+    # Draw purchased powerups as icons at bottom-left; clicking uses them
+    # powerup_slots was computed at top of loop
+    for slot in powerup_slots:
+        r = slot['rect']
+        # background card
+        pygame.draw.rect(screen, (40, 40, 40), r)
+        pygame.draw.rect(screen, (120, 120, 120), r, 2)
+        # icon
+        key = slot['key']
+        img = powerup_images.get(key)
+        if img:
+            img_r = img.get_rect(center=(r.x + 28, r.y + 28))
+            screen.blit(img, img_r)
+        # count badge
+        cnt = slot['count']
+        badge_pos = (r.right - 10, r.y + 10)
+        pygame.draw.circle(screen, (0, 200, 0), badge_pos, 10)
+        ct = font.render(str(cnt), True, (0, 0, 0))
+        ct_r = ct.get_rect(center=badge_pos)
+        screen.blit(ct, ct_r)
+        # if active, draw remaining seconds indicator (small bar)
+        t = powerup_timers.get(key, 0)
+        if t > 0:
+            secs = int(math.ceil(t / float(FPS)))
+            sec_text = font.render(f"{secs}s", True, (255, 255, 0))
+            st_r = sec_text.get_rect(center=(r.centerx, r.y - 10))
+            screen.blit(sec_text, st_r)
     if level_complete:
         win_text = big_font.render("LEVEL COMPLETE! Final Score: " + str(score), True, (255, 255, 0))
         screen.blit(win_text, (SCREEN_WIDTH//2 - win_text.get_width()//2, SCREEN_HEIGHT//2))
