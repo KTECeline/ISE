@@ -1,21 +1,3 @@
-"""
-main_menu.py - FUNGAL WASTES
-Polished Pygame main menu (cleaned & corrected)
-Features:
-- background image (user path fallback)
-- procedural stone-textured buttons (darker base)
-- neon green hover glow
-- title with dark moss outline and subtle pulse
-- footer "Developed by G23" (plain white)
-- main menu: Start Game | Options | Exit
-- Options submenu: Marketplace | Level 2 | Back
-- Level 2 uses in-process placeholder scene with fade transition
-- hover/click sfx optional, music optional
-- floating spores particle effect
-- robust fallbacks for missing assets and audio
-- Story scene with typing effect before starting level 1
-"""
-
 import pygame
 import sys
 import os
@@ -662,3 +644,4 @@ def main_loop():
 # Ensure there is an entry
 if __name__ == "__main__":
     main_loop()
+
