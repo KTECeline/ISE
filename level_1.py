@@ -68,12 +68,12 @@ player = Entity(
     model='sphere',
     color=color.yellow,
     scale=(0.5, 0.5, 0.5),
-    position=(-20, 0.25, 0),
+    position=(0, 0.25, 0),
     collider='sphere'
 )
 
 # Position adjustment values
-x_offset = 35.5  # Decrease to move right, increase to move left
+x_offset = 27  # Decrease to move right, increase to move left
 z_offset = 9.8    # Decrease to move up, increase to move down
 
 # Create an animated red mushroom coin
@@ -87,18 +87,63 @@ red_coin = Entity(
     rotation_x=90                # Face down for top view
 )
 
-# Animation variables for the coin
+# Create an animated green mushroom coin
+green_coin = Entity(
+    model='quad',
+    texture=mushroom_textures['green'],
+    texture_scale=(1/5, 1),      # Show 1/5th of the texture
+    texture_offset=(0, 0),       # Start with first frame
+    scale=(1, 1),
+    position=(1175/81 - x_offset, 1, -760/75 - z_offset),
+    rotation_x=90                # Face down for top view
+)
+
+# Create an animated blue mushroom coin
+blue_coin = Entity(
+    model='quad',
+    texture=mushroom_textures['blue'],
+    texture_scale=(1/5, 1),      # Show 1/5th of the texture
+    texture_offset=(0, 0),       # Start with first frame
+    scale=(1, 1),
+    position=(4745/81 - x_offset, 1, 1740/75 - z_offset),
+    rotation_x=90                # Face down for top view
+)
+
+# Animation variables for the coins
 red_coin.frame = 0
 red_coin.animation_time = 0
+green_coin.frame = 0
+green_coin.animation_time = 0
+blue_coin.frame = 0
+blue_coin.animation_time = 0
 red_coin.frame_duration = 0.2    # Time per frame in seconds
+green_coin.frame_duration = 0.2  # Time per frame in seconds
+blue_coin.frame_duration = 0.2   # Time per frame in seconds
 
 def update_coin_animation():
+    # Update red coin
     red_coin.animation_time += time.dt
     if red_coin.animation_time >= red_coin.frame_duration:
         # Move to next frame
         red_coin.frame = (red_coin.frame + 1) % 5
         red_coin.texture_offset = (red_coin.frame/5, 0)
         red_coin.animation_time = 0
+    
+    # Update green coin
+    green_coin.animation_time += time.dt
+    if green_coin.animation_time >= green_coin.frame_duration:
+        # Move to next frame
+        green_coin.frame = (green_coin.frame + 1) % 5
+        green_coin.texture_offset = (green_coin.frame/5, 0)
+        green_coin.animation_time = 0
+    
+    # Update blue coin
+    blue_coin.animation_time += time.dt
+    if blue_coin.animation_time >= blue_coin.frame_duration:
+        # Move to next frame
+        blue_coin.frame = (blue_coin.frame + 1) % 5
+        blue_coin.texture_offset = (blue_coin.frame/5, 0)
+        blue_coin.animation_time = 0
 
 # Create camera positioned above the player for top-down view
 camera.position = (0, 50, 0)
