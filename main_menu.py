@@ -1,3 +1,8 @@
+"""
+main_menu.py - MYCELIUM'S LAMENT
+Updated with multiple story backgrounds and smooth fade transitions
+"""
+
 import pygame
 import sys
 import os
@@ -10,12 +15,23 @@ from random import uniform, randint
 # -------------------------
 # Configuration
 # -------------------------
-BG_PATH = r"assets/images/background.img.png"
-STORY_BG_PATH = r"assets/images/story_background.png"
+BG_PATH = r"C:\Users\Xdimt\Downloads\background.img.png"
+STORY_BG_PATHS = [
+    r"C:\Users\Xdimt\Downloads\story_Background1.png",
+    r"C:\Users\Xdimt\Downloads\story_Background2.png", 
+    r"C:\Users\Xdimt\Downloads\story_Background3.png",
+    r"C:\Users\Xdimt\Downloads\story_Background4.png"
+]
 FONT_PATH = os.path.join("assets", "fonts", "skooled_serif.ttf")
-HOVER_SFX = r"assets/sounds/Hover.mp3"
-CLICK_SFX = r"assets/sounds/Click.mp3"
-MUSIC_PATH = r"assets/sounds/Background_music.mp3"
+HOVER_SFX = r"C:\Users\Xdimt\Downloads\Hover.mp3"
+CLICK_SFX = r"C:\Users\Xdimt\Downloads\Click.mp3"
+MUSIC_PATH = r"C:\Users\Xdimt\Downloads\Background_music.mp3"
+
+# Voice audio paths
+VOICE_PATHS = {
+    "story_intro": r"C:\Users\Xdimt\Downloads\voice_story_intro.mp3",
+    "wm_greeting": r"C:\Users\Xdimt\Downloads\voice_wm_greeting.mp3"
+}
 
 SCREEN_WIDTH = 1280
 SCREEN_HEIGHT = 720
@@ -32,7 +48,7 @@ BUTTON_BOTTOM = (40, 58, 40)
 BUTTON_BORDER = (20, 36, 20)
 STATS_COLOR = (220, 230, 220)
 STORY_TEXT_COLOR = (220, 240, 220)
-LORE_TEXT_COLOR = (180, 220, 180)  # Slightly different color for lore text
+LORE_TEXT_COLOR = (180, 220, 180)
 
 # Buttons layout
 BUTTON_W = 420
@@ -45,45 +61,22 @@ BUTTON_SPACING = 96
 NUM_SPORES = 70
 SPORE_COLOR = (200, 255, 170)
 
-# Updated Story text with Mycelium's Lament lore
+# Improved Story text - combined sentences for better flow
 STORY_LINES = [
-    "In the ancient fungal realm of Echofungus...",
-    "A vast underground world woven from mycelial threads",
-    "and spore-veiled caverns...",
-    "",
-    "Life pulses through symbiotic cycles",
-    "of decay and rebirth...",
-    "",
-    "But a cataclysmic Blightstorm fractures the realm...",
-    "Guardian monsters starve...",
-    "The void encroaches...",
-    "",
-    "You are a Surface Echo...",
-    "A rare wanderer from the barren above-world...",
-    "Drawn by Hyphara's call to restore balance...",
-    "",
+    "In the ancient fungal realm of Echofungus, a vast underground world woven from mycelial threads and spore-veiled caverns, life pulses through symbiotic cycles of decay and rebirth.",
+    "But a cataclysmic Blightstorm—a spore plague—fractured the realm, starving the guardian monsters that hold back the encroaching void.",
+    "You are a Surface Echo, a rare wanderer from the barren above-world, drawn by Hyphara's call to restore balance.",
+    "Your journey involves collecting and feeding sacred mushrooms to these monstrous guardians, awakening their strength and mending the mycelial web.",
+    "Failure means the Blightstorm consumes all; success earns Hyphara's gratitude and ascension to the Sporelit Heavens.",
     "Your journey begins now."
 ]
 
-# Wise Mushroom dialogue
+# Improved Wise Mushroom dialogue - combined sentences
 WM_DIALOGUE = [
-    "Is that a visitor I see? A rare sight indeed...",
-    "We haven't had one in a while.",
-    "",
-    "A quiet one, hmm. Mind if you tell me your name?",
-    "Or at least write it down...",
-    "",
-    "I am Eldergill, last of the Rootbound Sages.",
-    "The Blightstorm rages below—our guardians starve,",
-    "and the mycelial web unravels.",
-    "",
-    "Hyphara dreams of a feeder from above.",
-    "Will you descend? Prove your weave?",
-    "",
-    "The soil hungers, young Echo.",
-    "Gather the gifts of decay—feed the maws to pass.",
-    "Fail, and the void claims us all.",
-    "",
+    "Is that a visitor I see? A rare sight indeed... We haven't had one in a while.",
+    "A quiet one, hmm. Mind if you tell me your name? Or at least write it down.",
+    "I am Eldergill, last of the Rootbound Sages. The Blightstorm rages below—our guardians starve, and the web unravels. Hyphara dreams of a feeder from above. Will you descend? Prove your weave?",
+    "The soil hungers, young Echo. Gather the gifts of decay—feed the maws to pass. Fail, and the void claims us all.",
     "Go now... the Fungal Waste awaits."
 ]
 
@@ -99,11 +92,11 @@ except Exception as e:
     mixer_ok = False
 
 screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
-pygame.display.set_caption("Mycelium's Lament")  # Updated game title
+pygame.display.set_caption("Mycelium's Lament")
 clock = pygame.time.Clock()
 
 # ensure asset dirs
-for d in ['assets/sounds', 'assets/music', 'assets/fonts', 'assets/menu']:
+for d in ['assets/sounds', 'assets/music', 'assets/fonts', 'assets/menu', 'assets/voice']:
     os.makedirs(d, exist_ok=True)
 
 # -------------------------
@@ -124,7 +117,16 @@ def load_background(path):
     return surf
 
 background = load_background(BG_PATH)
-story_background = load_background(STORY_BG_PATH)
+
+# Load all story backgrounds
+story_backgrounds = []
+for path in STORY_BG_PATHS:
+    bg = load_background(path)
+    story_backgrounds.append(bg)
+
+# If no story backgrounds loaded, use the main background as fallback
+if not story_backgrounds:
+    story_backgrounds = [background]
 
 # -------------------------
 # Fonts
@@ -144,13 +146,15 @@ title_font = load_font(FONT_PATH, 86, fallback_name="Georgia")
 button_font = load_font(FONT_PATH, 36, fallback_name="Arial")
 small_font = load_font(FONT_PATH, 18, fallback_name="Arial")
 story_font = load_font(FONT_PATH, 32, fallback_name="Georgia")
-dialogue_font = load_font(FONT_PATH, 28, fallback_name="Georgia")  # Font for WM dialogue
+dialogue_font = load_font(FONT_PATH, 28, fallback_name="Georgia")
 
 # -------------------------
 # Sounds (optional)
 # -------------------------
 hover_sfx = None
 click_sfx = None
+voice_sounds = {}  # Dictionary to hold voice audio
+
 if mixer_ok:
     try:
         if os.path.exists(HOVER_SFX):
@@ -161,6 +165,14 @@ if mixer_ok:
             mixer.music.load(MUSIC_PATH)
             mixer.music.set_volume(0.45)
             mixer.music.play(-1)
+        
+        # Load voice sounds if they exist
+        for voice_key, voice_path in VOICE_PATHS.items():
+            if os.path.exists(voice_path):
+                voice_sounds[voice_key] = mixer.Sound(voice_path)
+                print(f"[INFO] Loaded voice: {voice_key}")
+            else:
+                print(f"[INFO] Voice file not found: {voice_path}")
     except Exception as e:
         print("[WARN] Sound load/play failed:", e)
 
@@ -301,20 +313,27 @@ class Button:
             self.callback()
 
 # -------------------------
-# Story scene typing effect
+# Story scene typing effect with audio support and background transitions
 # -------------------------
 class StoryTypingEffect:
-    def __init__(self, lines, font, color=STORY_TEXT_COLOR):
+    def __init__(self, lines, font, color=STORY_TEXT_COLOR, voice_key=None, backgrounds=None):
         self.lines = lines
         self.font = font
         self.color = color
         self.current_line = 0
         self.current_char = 0
         self.last_update_time = 0
-        self.char_delay = 45  # ms between characters
-        self.line_delay = 1200  # ms between lines
+        self.char_delay = 40  # ms between characters
+        self.line_delay = 1500  # ms between lines
         self.finished = False
         self.waiting_for_next = False
+        self.voice_played = False
+        self.voice_key = voice_key
+        self.backgrounds = backgrounds or []
+        self.current_bg_index = 0
+        self.bg_transition_alpha = 0
+        self.bg_transitioning = False
+        self.bg_transition_speed = 3  # Higher = slower transition
         
     def update(self, current_time):
         if self.finished or self.waiting_for_next:
@@ -324,9 +343,40 @@ class StoryTypingEffect:
             self.last_update_time = current_time
             self.current_char += 1
             
+            # Play voice when starting the first line (only once)
+            if self.current_line == 0 and self.current_char == 1 and self.voice_key and not self.voice_played:
+                self.play_voice()
+                self.voice_played = True
+            
+            # Handle background transitions based on line progress
+            self.update_background_transitions()
+            
             # Check if current line is complete
             if self.current_char >= len(self.lines[self.current_line]):
                 self.waiting_for_next = True
+                
+    def update_background_transitions(self):
+        # Change background every 2 lines (approximately)
+        target_bg_index = min(len(self.backgrounds) - 1, self.current_line // 2)
+        
+        if target_bg_index != self.current_bg_index and not self.bg_transitioning:
+            self.bg_transitioning = True
+            self.bg_transition_alpha = 0
+            
+        if self.bg_transitioning:
+            self.bg_transition_alpha += self.bg_transition_speed
+            if self.bg_transition_alpha >= 255:
+                self.current_bg_index = int(target_bg_index)  # Ensure it's an integer
+                self.bg_transitioning = False
+                self.bg_transition_alpha = 0
+                
+    def play_voice(self):
+        if self.voice_key and self.voice_key in voice_sounds:
+            try:
+                voice_sounds[self.voice_key].play()
+                print(f"[INFO] Playing voice: {self.voice_key}")
+            except Exception as e:
+                print(f"[WARN] Could not play voice {self.voice_key}: {e}")
                 
     def skip_or_next(self):
         if self.waiting_for_next:
@@ -378,8 +428,8 @@ class NameInput:
             elif event.key == pygame.K_BACKSPACE:
                 self.text = self.text[:-1]
             else:
-                # Limit name length and only allow alphanumeric
-                if len(self.text) < 12 and event.unicode.isalnum():
+                # Limit name length and only allow alphanumeric + spaces
+                if len(self.text) < 16 and (event.unicode.isalnum() or event.unicode == ' '):
                     self.text += event.unicode
         return False
         
@@ -467,8 +517,8 @@ level2_buttons = [
 # scene state
 current_scene = "menu"
 scene_fade = {"active": False, "alpha": 0, "dir": 0, "target": None}
-story_typing = StoryTypingEffect(STORY_LINES, story_font)
-wm_dialogue = StoryTypingEffect(WM_DIALOGUE, dialogue_font, LORE_TEXT_COLOR)
+story_typing = StoryTypingEffect(STORY_LINES, story_font, voice_key="story_intro", backgrounds=story_backgrounds)
+wm_dialogue = StoryTypingEffect(WM_DIALOGUE, dialogue_font, LORE_TEXT_COLOR, voice_key="wm_greeting")
 name_input = NameInput()
 
 # -------------------------
@@ -543,7 +593,7 @@ def render_menu(dt, mouse_pos):
     for s in spores: s.draw(screen)
     global title_phase
     title_phase += 0.02 * (dt/16.0)
-    draw_centered_title(screen, "MYCELIUM'S LAMENT", title_font, (200,245,200), DARK_MOSS_OUTLINE, SCREEN_WIDTH//2, 160)  # Updated title
+    draw_centered_title(screen, "MYCELIUM'S LAMENT", title_font, (200,245,200), DARK_MOSS_OUTLINE, SCREEN_WIDTH//2, 160)
     # stats
     stats = [
         f"Score: {game_data.get('score',0)}",
@@ -592,16 +642,31 @@ def render_level2(dt, mouse_pos):
     screen.blit(footer, footer.get_rect(center=(SCREEN_WIDTH//2, SCREEN_HEIGHT-28)))
 
 def render_story_intro(dt, mouse_pos, current_time):
-    screen.blit(story_background, (0,0))
+    # Update typing effect
+    global story_typing
+    story_typing.update(current_time)
+    
+    # Draw current background with transition
+    if story_typing.backgrounds and len(story_typing.backgrounds) > 0:
+        current_bg_index = int(story_typing.current_bg_index)  # Ensure it's an integer
+        if current_bg_index < len(story_typing.backgrounds):
+            current_bg = story_typing.backgrounds[current_bg_index]
+            screen.blit(current_bg, (0, 0))
+            
+            # If transitioning, draw the next background with alpha
+            if story_typing.bg_transitioning and current_bg_index < len(story_typing.backgrounds) - 1:
+                next_bg_index = current_bg_index + 1
+                if next_bg_index < len(story_typing.backgrounds):
+                    next_bg = story_typing.backgrounds[next_bg_index]
+                    transition_surf = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT))
+                    transition_surf.blit(next_bg, (0, 0))
+                    transition_surf.set_alpha(story_typing.bg_transition_alpha)
+                    screen.blit(transition_surf, (0, 0))
     
     # Add dark overlay for better text readability
     overlay = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
     overlay.fill((0, 0, 0, 120))
     screen.blit(overlay, (0, 0))
-    
-    # Update typing effect
-    global story_typing
-    story_typing.update(current_time)
     
     # Draw current text
     current_text = story_typing.get_current_text()
@@ -624,7 +689,11 @@ def render_story_intro(dt, mouse_pos, current_time):
         screen.blit(prompt, prompt_rect)
 
 def render_wm_dialogue(dt, mouse_pos, current_time):
-    screen.blit(story_background, (0,0))
+    # Use the last story background for WM dialogue
+    if story_backgrounds and len(story_backgrounds) > 0:
+        screen.blit(story_backgrounds[-1], (0,0))
+    else:
+        screen.blit(background, (0,0))
     
     # Add dark overlay for better text readability
     overlay = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
@@ -777,9 +846,9 @@ def main_loop():
                     current_scene = scene_fade.get("target", current_scene)
                     # Reset story typing if entering story scene
                     if current_scene == "story_intro":
-                        story_typing = StoryTypingEffect(STORY_LINES, story_font)
+                        story_typing = StoryTypingEffect(STORY_LINES, story_font, voice_key="story_intro", backgrounds=story_backgrounds)
                     elif current_scene == "wm_dialogue":
-                        wm_dialogue = StoryTypingEffect(WM_DIALOGUE, dialogue_font, LORE_TEXT_COLOR)
+                        wm_dialogue = StoryTypingEffect(WM_DIALOGUE, dialogue_font, LORE_TEXT_COLOR, voice_key="wm_greeting")
                         name_input = NameInput()
                     scene_fade["dir"] = -1
             elif scene_fade["dir"] == -1:
