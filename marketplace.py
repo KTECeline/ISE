@@ -23,6 +23,8 @@ big_font = pygame.font.Font(None, 36)
 # Sound setup (optional)
 hover_sfx = None
 click_sfx = None
+footsteps = None
+footsteps_channel = None
 try:
     try:
         pygame.mixer.init()
@@ -39,8 +41,31 @@ try:
                 click_sfx = pygame.mixer.Sound('assets/sounds/Click.mp3')
             except Exception:
                 click_sfx = None
+        # footsteps SFX (mp3 preferred, wav fallback)
+        if __import__('os').path.exists('assets/sounds/footsteps.mp3'):
+            try:
+                footsteps = pygame.mixer.Sound('assets/sounds/footsteps.mp3')
+            except Exception:
+                footsteps = None
+        elif __import__('os').path.exists('assets/sounds/footsteps.wav'):
+            try:
+                footsteps = pygame.mixer.Sound('assets/sounds/footsteps.wav')
+            except Exception:
+                footsteps = None
+        # Reserve a dedicated channel for footsteps so we can check/get_busy() and avoid overlaps
+        try:
+            # ensure there are enough channels and pick a fixed one
+            pygame.mixer.set_num_channels(max(8, pygame.mixer.get_num_channels()))
+            footsteps_channel = pygame.mixer.Channel(6)
+        except Exception:
+            # attempt a best-effort fallback to find any free channel
+            try:
+                footsteps_channel = pygame.mixer.find_channel()
+            except Exception:
+                footsteps_channel = None
 except Exception:
-    hover_sfx = click_sfx = None
+    hover_sfx = click_sfx = footsteps = None
+    footsteps_channel = None
 
 # ---------- Helpers ----------
 def load_inventory():
@@ -71,21 +96,34 @@ def save_inventory(inv):
 
 # ---------- Particle ----------
 class Particle(pygame.sprite.Sprite):
-    def __init__(self, x, y, vel, color=(100, 255, 200)):
+    def __init__(self, x, y, vel, color=(100, 255, 200), size=4, lifetime=60, alpha=200):
         super().__init__()
-        self.image = pygame.Surface((3, 3), pygame.SRCALPHA)
-        self.image.fill(color + (128,))
-        self.rect = self.image.get_rect(center=(x, y))
-        self.vel = vel
-        self.lifetime = 60
+        size = max(1, int(size))
+        self.image = pygame.Surface((size, size), pygame.SRCALPHA)
+        # ensure color is RGB tuple
+        try:
+            rgba = tuple(color) + (int(alpha),)
+        except Exception:
+            rgba = (100, 255, 200, int(alpha))
+        self.image.fill(rgba)
+        self.rect = self.image.get_rect(center=(int(x), int(y)))
+        self.vel = pygame.Vector2(vel)
+        self.lifetime = int(lifetime)
+        self._initial_lifetime = int(lifetime)
 
     def update(self):
         self.rect.x += self.vel.x
         self.rect.y += self.vel.y
-        self.vel.y += 0.05
+        # gentle gravity
+        self.vel.y += 0.06
         self.lifetime -= 1
-        self.image.set_alpha(int(128 * (self.lifetime / 60)))
-        if self.lifetime <= 0 or self.rect.y > SCREEN_HEIGHT:
+        frac = max(0.0, min(1.0, float(self.lifetime) / float(self._initial_lifetime)))
+        # fade relative to initial alpha (preserve surface content then set overall alpha)
+        try:
+            self.image.set_alpha(int(255 * frac))
+        except Exception:
+            pass
+        if self.lifetime <= 0 or self.rect.y > SCREEN_HEIGHT + 50:
             self.kill()
 
 # ---------- Marketplace ----------
@@ -98,6 +136,8 @@ class Marketplace:
         self.fade_alpha = 0
         self.fade_dir = 0
         self.particles = pygame.sprite.Group()
+        # frame tracking for discrete footstep spawns
+        self._last_walk_frame = -1
         self.hovered_item = None
         self.selected_item = None
         self.preview_timer = 0
@@ -168,11 +208,16 @@ class Marketplace:
         self.item_images = {}
         self.load_item_images()
 
-        # Ambient particles
-        for _ in range(15):
-            self.particles.add(Particle(random.randint(0, SCREEN_WIDTH),
-                                        random.randint(0, SCREEN_HEIGHT),
-                                        pygame.Vector2(0, 0)))
+        # Ambient particles (more visible: varied velocities, sizes & colors)
+        ambient_colors = [(120, 220, 180), (200, 180, 120), (180, 200, 255), (255, 240, 180)]
+        for _ in range(18):
+            vx = random.uniform(-0.6, 0.6)
+            vy = random.uniform(-0.2, 0.6)
+            size = random.randint(2, 6)
+            color = random.choice(ambient_colors)
+            x = random.randint(0, SCREEN_WIDTH)
+            y = random.randint(0, SCREEN_HEIGHT)
+            self.particles.add(Particle(x, y, pygame.Vector2(vx, vy), color=color, size=size, lifetime=random.randint(40, 80), alpha=200))
 
     def setup_item_rects(self):
         item_w, item_h = 180, 140
@@ -264,6 +309,17 @@ class Marketplace:
         self.state = new_state
         self.fade_dir = 1
         self.fade_alpha = 0
+        # ensure any walking/footsteps SFX stops when we leave the walking state
+        try:
+            if footsteps:
+                footsteps.stop()
+        except Exception:
+            pass
+        try:
+            if footsteps_channel:
+                footsteps_channel.stop()
+        except Exception:
+            pass
 
     def update(self):
         # Walking in
@@ -271,20 +327,63 @@ class Marketplace:
             self.walk_progress += 1 / WALK_DURATION
             if self.walk_progress >= 1:
                 self.walk_progress = 1
-                for _ in range(5):
-                    self.particles.add(Particle(self.player.rect.centerx, self.player.rect.y,
-                                                pygame.Vector2(0, -1), (255, 255, 0)))
+                # stronger, visible burst on finish
+                for _ in range(18):
+                    ang = random.uniform(0, math.pi * 2)
+                    sp = random.uniform(1.0, 3.2)
+                    vx = math.cos(ang) * sp
+                    vy = math.sin(ang) * sp * -0.7
+                    self.particles.add(Particle(self.player.rect.centerx, self.player.rect.bottom - 6,
+                                                pygame.Vector2(vx, vy), color=(255, 220, 80), size=random.randint(3,6), lifetime=random.randint(40,90), alpha=220))
                 self.transition('entry')
+            # update player with optional walk progress
             try:
                 self.player.update(self.walk_progress, SCREEN_WIDTH)
             except Exception:
                 new_x = -50 + (SCREEN_WIDTH // 2 + 50) * self.walk_progress
                 bounce = math.sin(self.walk_progress * math.pi) * 5
                 self.player.rect.midbottom = (int(new_x), SCREEN_HEIGHT - 100 + int(bounce))
-            if int(self.walk_progress * WALK_DURATION) % 20 == 0:
-                self.particles.add(Particle(self.player.rect.centerx,
-                                            self.player.rect.bottom,
-                                            pygame.Vector2(0, 2), (150, 100, 50)))
+
+            # spawn footstep particles when discrete walk frames advance
+            cur_frame = int(self.walk_progress * WALK_DURATION)
+            if cur_frame != self._last_walk_frame:
+                # footstep cadence roughly every ~10 frames (adjustable)
+                if cur_frame % 10 == 0:
+                    # spawn 2 small foot particles at player's feet
+                    for i in range(2):
+                        vx = random.uniform(-0.6, 0.6) + ( -0.6 if i==0 else 0.6 )*0.1
+                        vy = random.uniform(-0.4, 1.2)
+                        self.particles.add(Particle(self.player.rect.centerx + random.randint(-6,6),
+                                                    self.player.rect.bottom - 4,
+                                                    pygame.Vector2(vx, vy), color=(200,160,100), size=random.randint(3,6), lifetime=50, alpha=220))
+                    # play footsteps sound once per cadence (use dedicated channel to avoid overlaps)
+                    try:
+                        global footsteps_channel
+                        if footsteps:
+                            # ensure we have a dedicated channel; try to create/find one if missing
+                            if footsteps_channel is None:
+                                try:
+                                    pygame.mixer.set_num_channels(max(8, pygame.mixer.get_num_channels()))
+                                    footsteps_channel = pygame.mixer.Channel(6)
+                                except Exception:
+                                    try:
+                                        footsteps_channel = pygame.mixer.find_channel()
+                                    except Exception:
+                                        footsteps_channel = None
+                            if footsteps_channel:
+                                if not footsteps_channel.get_busy():
+                                    footsteps_channel.play(footsteps)
+                    except Exception:
+                        pass
+                self._last_walk_frame = cur_frame
+
+        else:
+            # If we're no longer in walking state ensure footsteps audio is stopped.
+            try:
+                if footsteps_channel and footsteps_channel.get_busy():
+                    footsteps_channel.stop()
+            except Exception:
+                pass
 
         if random.randint(1, 100) == 1:
             self.particles.add(Particle(random.randint(0, SCREEN_WIDTH), 0,
