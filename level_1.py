@@ -4,6 +4,11 @@ from PIL import Image
 import random
 import math
 
+# Define sound effects
+mushroom_coin_sound = Audio('assets/sounds/level_1_mushroom-coin-poof.mp3', autoplay=False, loop=False)
+damage_sound = Audio('assets/sounds/level_1_damaged.mp3', autoplay=False, loop=False)
+gameover_sound = Audio('assets/sounds/level_1_gameover.wav', autoplay=False, loop=False)
+
 app = Ursina()
 # Remove the internal exit button
 window.exit_button.enabled = False
@@ -244,7 +249,7 @@ class Particle(Entity):
 
 # Create particle pool and list to store them
 particles = []
-particle_count = 75  # Number of particles in the scene
+particle_count = 50  # Number of particles in the scene
 
 # Variables to track diagnostic mode
 diagnostic_mode = False
@@ -427,13 +432,13 @@ camera.rotation_x = 90
 
 # Zoom settings (only used in diagnostic mode)
 min_height = 5
-max_height = 100
+max_height = 1000
 zoom_speed = 2
 
 # Diagnostic view settings
 diagnostic_base_height = 5  # Lower default diagnostic view height
 diagnostic_min_zoom = 3
-diagnostic_max_zoom = 40  # Increased max zoom for more zoomed out view
+diagnostic_max_zoom = 1000  # Increased max zoom for more zoomed out view
 diagnostic_zoom = 25  # Starting with a more zoomed out view
 
     # Score, lives and game state
@@ -605,6 +610,9 @@ def check_trap_collision():
             lives -= 1
             lives_text.text = f'Lives: {lives}'
             
+            # Play damage sound
+            damage_sound.play()
+            
             # Check if game over
             if lives <= 0:
                 is_game_over = True
@@ -615,10 +623,6 @@ def check_trap_collision():
             player.position = initial_player_position
             # Reset velocity and animation state
             return True
-        
-        # Debug output
-        if diagnostic_mode:
-            print(f"Current color: R:{r} G:{g} B:{b}")
             
         return False
     except Exception as e:
@@ -664,16 +668,19 @@ def update():
         red_coin.enabled = False
         score += 1
         score_text.text = f'Mushroom Coins collected: {score}'
+        mushroom_coin_sound.play()
         
     if green_coin.enabled and check_coin_collection(green_coin, player):
         green_coin.enabled = False
         score += 1
         score_text.text = f'Mushroom Coins collected: {score}'
+        mushroom_coin_sound.play()
         
     if blue_coin.enabled and check_coin_collection(blue_coin, player):
         blue_coin.enabled = False
         score += 1
         score_text.text = f'Mushroom Coins collected: {score}'
+        mushroom_coin_sound.play()
     
     moving = False
     squating = False
@@ -906,6 +913,8 @@ def show_game_over():
     retry_button.enabled = True
     # Disable player movement
     player.enabled = False
+    # Play game over sound
+    gameover_sound.play()
 
 def reset_game():
     global lives, score, is_game_over
