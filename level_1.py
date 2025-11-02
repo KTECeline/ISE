@@ -51,7 +51,7 @@ app = Ursina()
 window.exit_button.enabled = False
 
 # Load and play background music
-bgm_path = os.path.join('assets', 'music', 'Level_1_bgm_In Gloomy Meditation.mp3')
+bgm_path = os.path.join('assets', 'music', 'Level_1_bgm_In_Gloomy_Meditation.mp3')
 pygame.mixer.music.load(bgm_path)
 pygame.mixer.music.play(-1)  # -1 means loop indefinitely
 pygame.mixer.music.set_volume(0.5)  # Set volume to 50%
@@ -298,11 +298,6 @@ particle_count = 50  # Number of particles in the scene
 diagnostic_mode = False
 prev_t_state = False
 
-# Ground state debounce variables
-ground_check_timer = 0
-ground_check_delay = 0.1  # Time in seconds to wait before allowing state change
-last_ground_state = True
-
 # Debug text for collision checking
 collision_debug = Text(
     text='No collision data',
@@ -336,21 +331,25 @@ animation_debug_text = Text(
 # Create player with sprite sheet animation
 player = SpriteSheetAnimation(
     'character/chamove', 
-    tileset_size=(7,9),
+    tileset_size=(7,11),
     fps=10,
     animations={
-        'walkright': ((0,7), (5,7)),
-        'walkleft': ((0,8), (5,8)),
-        'idle': ((0,6), (0,6)),
-        'idleLeft': ((1,6), (1,6)),
-        'jumpright' : ((2,6), (2,6)),
-        'jumpleft' : ((3,6), (3,6)),
-        'downright' : ((2,4), (2,4)),
-        'downleft' : ((3,4), (3,4)),
-        'dashright' : ((0,3), (6,3)),
-        'dashleft' : ((0, 2), (6, 2)),
-        'jumpdownRight' : ((0, 1), (3, 1)),
-        'jumpdownLeft' : ((0,9), (3,9))
+        'walkright': ((0,9), (5,9)),
+        'walkleft': ((0,10), (5,10)),
+        'idle': ((0,8), (0,8)),
+        'idleLeft': ((1,8), (1,8)),
+        'jumpright' : ((2,8), (2,8)),
+        'jumpleft' : ((3,8), (3,8)),
+        'downright' : ((2,6), (2,6)),
+        'downleft' : ((3,6), (3,6)),
+        'dashright' : ((3,5), (3,5)),
+        'dashleft' : ((3, 4), (3, 4)),
+        'jumpdownRight' : ((0, 3), (3, 3)),
+        'jumpdownLeft' : ((0,2), (3,2)),
+        'throwRight' : ((0,11), (2,11)),
+        'throwLeft' : ((3,11), (5,11)),
+        'climbRight': ((0,1), (0,1)),
+        'climbLeft' : ((1,1),(1,1))
     },
     position=(12, 0.25, -32) ,
     scale=1.5,
@@ -374,27 +373,37 @@ for i in range(particle_count):
     particles.append(particle)
 
 # Character movement variables
-speed = 5
-gravity = 0.7
+speed = 10
+gravity = 50
 jump_speed = 25
-velocity_y = 0
-on_ground = True
+velocity_z = 0  # Changed from velocity_y to velocity_z for Z-axis movement
+on_ground = False  # Start in air to force falling
 current_animation = 'idle'
 facePosition = 'right'
 
 # Jump cooldown
 can_jump = True
-jump_cooldown = 0.6
+double_jump = False
+jump_cooldown = 2
 jump_timer = 0
 
 # Dash variables
 is_dashing = False
-dash_speed = 12
+dash_speed = 23
 dash_duration = 0.25
 dash_timer = 0
 dash_cooldown = 1.0
 can_dash = True
 dash_cooldown_timer = 0
+
+# Wall jump variables
+on_wall = False
+wall_jump_cooldown = 0.2
+wall_jump_timer = 0
+
+# Collision resolution settings
+collision_push_distance = 0.05
+max_push_attempts = 5
 
 # Position adjustment values
 x_offset = 27  # Decrease to move right, increase to move left
@@ -625,6 +634,49 @@ def check_coin_collection(coin, player):
     # If player is close enough to coin (within 1 unit)
     return distance < 1
 
+def resolve_collision(x, z, original_x, original_z):
+    """Try to push the character out of collision in the best direction."""
+    # Try different push directions
+    directions = [
+        (original_x - x, original_z - z),  # Opposite of movement
+        (0, collision_push_distance),      # Up
+        (0, -collision_push_distance),     # Down
+        (collision_push_distance, 0),      # Right
+        (-collision_push_distance, 0),     # Left
+        (collision_push_distance, collision_push_distance),   # Up-Right
+        (-collision_push_distance, collision_push_distance),  # Up-Left
+        (collision_push_distance, -collision_push_distance),  # Down-Right
+        (-collision_push_distance, -collision_push_distance), # Down-Left
+    ]
+    
+    for dx, dz in directions:
+        new_x = x + dx
+        new_z = z + dz
+        if not check_collision(Vec3(new_x, player.y, new_z)):
+            return new_x, new_z
+    
+    # If all else fails, return to original position
+    return original_x, original_z
+
+def check_collision_at_position(x, z, radius=0.3):
+    """Check multiple points around the character to prevent sticking."""
+    points = [
+        (x, z),  # center
+        (x - radius, z),  # left
+        (x + radius, z),  # right
+        (x, z - radius),  # bottom
+        (x, z + radius),  # top
+        (x - radius * 0.7, z - radius * 0.7),  # bottom-left
+        (x + radius * 0.7, z - radius * 0.7),  # bottom-right
+        (x - radius * 0.7, z + radius * 0.7),  # top-left
+        (x + radius * 0.7, z + radius * 0.7),  # top-right
+    ]
+    
+    for px, pz in points:
+        if check_collision(Vec3(px, player.y, pz)):
+            return True
+    return False
+
 def check_collision(new_position):
     """Check if new position would collide with a wall or trap"""
     global lives
@@ -752,15 +804,14 @@ def check_trap_collision():
         return False
 
 def update():
-    global current_animation, velocity_y, on_ground, facePosition
+    global current_animation, velocity_z, on_ground, facePosition
     global can_jump, jump_timer, is_dashing, dash_timer, can_dash, dash_cooldown_timer
+    global on_wall, wall_jump_timer
 
     moving = False
     squating = False
     #character value
     global score, diagnostic_mode, prev_t_state
-    global current_animation, velocity_y, on_ground, facePosition
-    global can_jump, jump_timer, is_dashing, dash_timer, can_dash, dash_cooldown_timer
     
     # Skip all updates if game is completed (except for animations)
     if is_game_completed:
@@ -771,7 +822,7 @@ def update():
     
     # Check if player is on a trap
     if check_trap_collision():
-        velocity_y = 0
+        velocity_z = 0
         on_ground = True
         is_dashing = False
     
@@ -818,9 +869,6 @@ def update():
     if score == 3:
         show_success()
     
-    moving = False
-    squating = False
-    
     # Update animation debug BEFORE any animation changes
     if diagnostic_mode:
         animation_debug_text.text = f'Animation: {current_animation} | Moving: {moving} | OnGround: {on_ground} | Dashing: {is_dashing}'
@@ -839,165 +887,216 @@ def update():
             can_dash = True
             dash_cooldown_timer = 0
 
+    # Store original position for collision resolution
+    original_x, original_z = player.x, player.z
+
     # --- DASH movement ---
     if is_dashing:
         dash_timer += time.dt
-        move_amount = dash_speed * time.dt
-        
         if facePosition == 'right':
-            new_pos = Vec3(player.x + move_amount, player.y, player.z)
+            next_x = player.x + dash_speed * time.dt
+            if not check_collision_at_position(next_x, player.z):
+                player.x = next_x
+            else:
+                # Resolve collision during dash
+                player.x, player.z = resolve_collision(player.x, player.z, original_x, original_z)
         else:
-            new_pos = Vec3(player.x - move_amount, player.y, player.z)
-        
-        # Check collision before moving
-        if not check_collision(new_pos):
-            player.position = new_pos
-            
+            next_x = player.x - dash_speed * time.dt
+            if not check_collision_at_position(next_x, player.z):
+                player.x = next_x
+            else:
+                player.x, player.z = resolve_collision(player.x, player.z, original_x, original_z)
         if dash_timer >= dash_duration:
             is_dashing = False
             dash_timer = 0
-            if on_ground:
-                if facePosition == 'right':
-                    player.play_animation('idle')
-                    current_animation = 'idle'
-                else:
-                    player.play_animation('idleLeft')
-                    current_animation = 'idleLeft'
-
-    # --- Normal movement (only if not dashing) ---
-    if not is_dashing:
-        # Right movement (D key)
-        if held_keys['d'] and not held_keys['s']:
-            new_pos = Vec3(player.x + time.dt * speed, player.y, player.z)
-            if not check_collision(new_pos):
-                player.x = new_pos.x
-                if current_animation != 'walkright' and current_animation != 'jumpright':
-                    if on_ground:
-                        player.play_animation('walkright')
-                        current_animation = 'walkright'
-                        facePosition = 'right'
-            moving = True
-
-        # Left movement (A key)
-        elif held_keys['a'] and not held_keys['s']:
-            new_pos = Vec3(player.x - time.dt * speed, player.y, player.z)
-            if not check_collision(new_pos):
-                player.x = new_pos.x
-                if current_animation != 'walkleft' and current_animation != 'jumpleft':
-                    if on_ground:
-                        player.play_animation('walkleft')
-                        current_animation = 'walkleft'
-                        facePosition = 'left'
-            moving = True
-
-        # Forward movement (W key)
-        if held_keys['w'] and not held_keys['s']:
-            new_pos = Vec3(player.x, player.y, player.z + time.dt * speed)
-            if not check_collision(new_pos):
-                player.z = new_pos.z
-            moving = True
-
-        # Backward movement (S key) - only when on ground
-        if held_keys['s'] and on_ground:
-            new_pos = Vec3(player.x, player.y, player.z - time.dt * speed)
-            if not check_collision(new_pos):
-                player.z = new_pos.z
-            if facePosition == 'right':
-                player.play_animation('downright')
-                current_animation = 'downright'
-            else:
-                player.play_animation('downleft')
-                current_animation = 'downleft'
-            moving = True
-            squating = True
-
-        # --- jumpdown feature ---
-        if held_keys['s'] and not on_ground and velocity_y > -5:
-            # faster fall when pressing S in air
-            velocity_y = -20  # strong downward speed
-            if facePosition == 'right':
-                player.play_animation('jumpdownRight')
-                current_animation = 'jumpdownRight'
-            else:
-                player.play_animation('jumpdownLeft')
-                current_animation = 'jumpdownLeft'
-
-        # --- Dash key pressed ---
-        if held_keys['shift'] and not is_dashing and can_dash:
-            is_dashing = True
-            can_dash = False
-            dash_timer = 0
-            if facePosition == 'right':
-                player.play_animation('dashright')
-                current_animation = 'dashright'
-            else:
-                player.play_animation('dashleft')
-                current_animation = 'dashleft'
-
-    if on_ground and not current_animation.startswith('walk') and not current_animation.startswith('down') and not current_animation.startswith('dash'):
-        if facePosition == 'right':
-            player.play_animation('idle')
-            current_animation = 'idle'
-        else:
-            player.play_animation('idleLeft')
-            current_animation = 'idleLeft'
-
-    # --- Apply gravity ---
-    if not on_ground:
-        velocity_y -= gravity
-        player.y += velocity_y * time.dt
-        
-        # Check if player has landed on ground
-        if check_ground(player.position):
-            player.y = 0.25
-            velocity_y = 0
-            on_ground = True
-            # Reset to idle animation when landing
+ 
             if facePosition == 'right':
                 player.play_animation('idle')
                 current_animation = 'idle'
             else:
                 player.play_animation('idleLeft')
                 current_animation = 'idleLeft'
-        elif player.y <= 0.25:
-            # Fallback if player goes too low
-            player.y = 0.25
-            velocity_y = 0
-            on_ground = True
-    else:
-        # Ground state check with debounce
-        global ground_check_timer, last_ground_state
-        ground_check_timer += time.dt
-        
-        # Only check ground state after delay
-        if ground_check_timer >= ground_check_delay:
-            check_pos = player.position
-            current_ground_check = check_ground(check_pos)
-            
-            # Only update state if it's been stable
-            if current_ground_check != last_ground_state:
-                ground_check_timer = 0  # Reset timer
-                last_ground_state = current_ground_check
-                
-                if not current_ground_check:
-                    on_ground = False
-                    if facePosition == 'right':
-                        player.play_animation('jumpright')
-                        current_animation = 'jumpright'
-                    else:
-                        player.play_animation('jumpleft')
-                        current_animation = 'jumpleft'
+
+    # --- Normal movement ---
+    if not is_dashing:
+        wall_left = check_collision_at_position(player.x - 0.3, player.z)
+        wall_right = check_collision_at_position(player.x + 0.3, player.z)
+        touching_wall = wall_left or wall_right
+
+        # Update wall status
+        if touching_wall and not on_ground:
+            on_wall = True
+            # Maintain climbing pose while on wall
+            if wall_left:
+                facePosition = 'left'
+            elif wall_right:
+                facePosition = 'right'
+            if current_animation not in ['climbRight', 'climbLeft']:
+                anim = 'climbRight' if facePosition == 'right' else 'climbLeft'
+                player.play_animation(anim)
+                current_animation = anim
+        else:
+            on_wall = False
+
+        # Only allow horizontal movement if not on wall
+        if not on_wall:
+            if held_keys['d'] and not held_keys['s']:
+                next_x = player.x + time.dt * speed
+                if not check_collision_at_position(next_x, player.z):
+                    player.x = next_x
                 else:
-                    on_ground = True
+                    # Try to resolve collision
+                    player.x, player.z = resolve_collision(player.x, player.z, original_x, original_z)
+                if current_animation != 'walkright' and on_ground:
+                    player.play_animation('walkright')
+                    current_animation = 'walkright'
+                    facePosition = 'right'
+                moving = True
+
+            elif held_keys['a'] and not held_keys['s']:
+                next_x = player.x - time.dt * speed
+                if not check_collision_at_position(next_x, player.z):
+                    player.x = next_x
+                else:
+                    player.x, player.z = resolve_collision(player.x, player.z, original_x, original_z)
+                if current_animation != 'walkleft' and on_ground:
+                    player.play_animation('walkleft')
+                    current_animation = 'walkleft'
+                    facePosition = 'left'
+                moving = True
+
+        if not hasattr(player, 'jump_count'):
+            player.jump_count = 0
+        if not hasattr(player, 'space_held'):
+            player.space_held = False
+
+        # Regular jump
+        if held_keys['space']:
+            if not player.space_held:
+                player.space_held = True
+
+                if on_ground:
+                    # Normal jump
+                    velocity_z = jump_speed
+                    on_ground = False
+                    if velocity_z >= 0:
+                        if held_keys['a']:
+                            facePosition = 'left'
+                        elif held_keys['d']:
+                            facePosition = 'right'
+                    anim = 'jumpright' if facePosition == 'right' else 'jumpleft'
+                    player.play_animation(anim)
+                    current_animation = anim
+
+                elif on_wall and wall_jump_timer <= 0:
+                    # Wall jump
+                    velocity_z = jump_speed + 5  # slightly less vertical
+                    # Push away from wall
+                    if wall_left:
+                        player.x += 0.3
+                        facePosition = 'left'
+                    elif wall_right:
+                        player.x -= 0.3
+                        facePosition = 'right'
+
+                    on_wall = False
+                    wall_jump_timer = wall_jump_cooldown
+
+                    anim = 'jumpright' if facePosition == 'right' else 'jumpleft'
+                    player.play_animation(anim)
+                    current_animation = anim
+        else:
+            player.space_held = False
+
+        # wall jump cooldown timer
+        if wall_jump_timer > 0:
+            wall_jump_timer -= time.dt
+
+        # Slow fall when on wall
+        if on_wall and velocity_z < 0:
+            velocity_z = -5
+
+        # Fall faster (only when not on wall)
+        if held_keys['s'] and not on_ground and not on_wall:
+            velocity_z = -45
+            anim = 'jumpdownRight' if facePosition == 'right' else 'jumpdownLeft'
+            player.play_animation(anim)
+            current_animation = anim
+
+        # Dash
+        if held_keys['shift'] and not is_dashing and can_dash and not on_wall:
+            is_dashing = True
+            can_dash = False
+            dash_timer = 0
+            anim = 'dashright' if facePosition == 'right' else 'dashleft'
+            player.play_animation(anim)
+            current_animation = anim
+
+        # Squat (only when on ground)
+        if held_keys['s'] and on_ground and not is_dashing:
+            anim = 'downright' if facePosition == 'right' else 'downleft'
+            player.play_animation(anim)
+            current_animation = anim
+            moving = True
+            squating = True
+
+
+    # --- ALWAYS APPLY GRAVITY until collision is reached ---
+    if not on_ground:
+        velocity_z -= gravity * time.dt
+        next_z = player.z + velocity_z * time.dt
+
+        
+        if not check_collision_at_position(player.x, next_z):
+            player.z = next_z
+            # Continue falling - update animation to falling state
+            if velocity_z < 0 and not is_dashing and not current_animation in ['jumpdownRight', 'jumpdownLeft'] and not on_wall:
+                if held_keys['a']:
+                    facePosition = 'left'
+                elif held_keys['d']:
+                    facePosition = 'right'
+                anim = 'jumpright' if facePosition == 'right' else 'jumpleft'
+                player.play_animation(anim)
+                current_animation = anim
+                
+                if current_animation != anim:
+                    player.play_animation(anim)
+                    current_animation = anim
+            elif velocity_z < 0 and current_animation in ['dashright', 'dashleft']:
+                anim = 'dashright' if facePosition == 'right' else 'dashleft'
+                player.play_animation(anim)
+                current_animation = anim
+        else:
+            # Landed - resolve vertical collision
+            if velocity_z < 0:  # Falling down
+                on_ground = True
+                player.jump_count = 0
+                velocity_z = 0
+                # Push up until not colliding
+                for i in range(max_push_attempts):
+                    if not check_collision_at_position(player.x, player.z):
+                        break
+                    player.z += collision_push_distance
+                # Set idle animation after landing
+                anim = 'idle' if facePosition == 'right' else 'idleLeft'
+                player.play_animation(anim)
+                current_animation = anim
+            else:  # Hitting ceiling
+                velocity_z = min(velocity_z, 0)  # Stop upward movement
+                # Push down a bit
+                player.z -= collision_push_distance
+
+    # Force falling if not on ground and no vertical movement
+    if on_ground and not check_collision_at_position(player.x, player.z - 0.1):
+        on_ground = False
+        velocity_z = -1  # Start falling slowly
 
     # --- Idle ---
-    if on_ground and not moving and not is_dashing and current_animation != 'idle':
-        if facePosition == 'right':
-            player.play_animation('idle')
-            current_animation = 'idle'
-        else:
-            player.play_animation('idleLeft')
-            current_animation = 'idleLeft'
+    if on_ground and not moving and not is_dashing and not squating and not on_wall:
+        if current_animation not in ['idle', 'idleLeft']:
+            anim = 'idle' if facePosition == 'right' else 'idleLeft'
+            player.play_animation(anim)
+            current_animation = anim
     
     # Camera follows player with offset in diagnostic mode
     if diagnostic_mode:
@@ -1019,8 +1118,14 @@ def update():
             player.z + camera_offset
         )
     else:
-        # Normal mode - fixed camera height at 21
-        camera.position = (player.x, 21, player.z + 2)  # Added offset to z to see more of the terrain ahead
+        # Normal mode - follow player with Q/E zoom controls
+        if held_keys['q']:
+            camera.y += zoom_speed * time.dt * 10
+            camera.y = clamp(camera.y, min_height, max_height)
+        if held_keys['e']:
+            camera.y -= zoom_speed * time.dt * 10
+            camera.y = clamp(camera.y, min_height, max_height)
+        camera.position = (player.x, camera.y, player.z)
     
     # Update zoom indicator
     zoom_indicator.text = f'Height: {int(camera.y)}'
@@ -1039,8 +1144,12 @@ def input(key):
             diagnostic_zoom += zoom_speed * 4
             diagnostic_zoom = clamp(diagnostic_zoom, diagnostic_min_zoom, diagnostic_max_zoom)
     else:
-        # No zoom controls in normal mode
-        pass
+        if key == 'scroll up':
+            camera.y -= zoom_speed
+            camera.y = clamp(camera.y, min_height, max_height)
+        if key == 'scroll down':
+            camera.y += zoom_speed
+            camera.y = clamp(camera.y, min_height, max_height)
 
 # Function to show success screen
 def show_success():
@@ -1087,16 +1196,26 @@ def show_game_over():
 
 def reset_game():
     global lives, score, is_game_over, is_game_completed, start_time, game_data
-    # Reload game data to get current lives
+    global velocity_z, on_ground, current_animation, facePosition
+    # Reload game data
     game_data = load_game_data()
+    # Reset lives to 3 when restarting after game over
+    lives = 3
+    game_data["lives"] = 3
+    save_game_data(game_data)
     # Reset game state
-    lives = game_data["lives"]
     score = 0  # Reset mushrooms collected in this level
     is_game_over = False
     is_game_completed = False
     start_time = time.time()
     lives_text.text = f'Lives: {lives}'
     score_text.text = f'Mushroom Coins collected: {score}'
+    
+    # Reset player physics
+    velocity_z = 0
+    on_ground = False
+    current_animation = 'idle'
+    facePosition = 'right'
     
     # Reset player
     player.enabled = True
