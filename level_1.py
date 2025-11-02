@@ -5,6 +5,10 @@ import random
 import math
 import os
 import json
+import pygame
+
+# Initialize pygame mixer for background music
+pygame.mixer.init()
 
 # Game data file
 GAME_DATA_FILE = "game_data.json"
@@ -45,6 +49,12 @@ success_sound = Audio('assets/sounds/level_1_mushroom-coin-poof.mp3', autoplay=F
 app = Ursina()
 # Remove the internal exit button
 window.exit_button.enabled = False
+
+# Load and play background music
+bgm_path = os.path.join('assets', 'music', 'Level_1_bgm_In Gloomy Meditation.mp3')
+pygame.mixer.music.load(bgm_path)
+pygame.mixer.music.play(-1)  # -1 means loop indefinitely
+pygame.mixer.music.set_volume(0.5)  # Set volume to 50%
 
 # Load and process mushroom coins with different colors
 mushroom_sheet = Image.open('assets/images/mushroom_coins.png')
