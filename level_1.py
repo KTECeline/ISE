@@ -3,6 +3,13 @@ import numpy as np
 from PIL import Image
 import random
 import math
+import os
+
+# Define sound effects
+mushroom_coin_sound = Audio('assets/sounds/level_1_mushroom-coin-poof.mp3', autoplay=False, loop=False)
+damage_sound = Audio('assets/sounds/level_1_damaged.mp3', autoplay=False, loop=False)
+gameover_sound = Audio('assets/sounds/level_1_gameover.wav', autoplay=False, loop=False)
+success_sound = Audio('assets/sounds/level_1_mushroom-coin-poof.mp3', autoplay=False, loop=False)  # Reusing coin sound for success
 
 app = Ursina()
 # Remove the internal exit button
@@ -244,7 +251,7 @@ class Particle(Entity):
 
 # Create particle pool and list to store them
 particles = []
-particle_count = 75  # Number of particles in the scene
+particle_count = 50  # Number of particles in the scene
 
 # Variables to track diagnostic mode
 diagnostic_mode = False
@@ -427,19 +434,20 @@ camera.rotation_x = 90
 
 # Zoom settings (only used in diagnostic mode)
 min_height = 5
-max_height = 100
+max_height = 1000
 zoom_speed = 2
 
 # Diagnostic view settings
 diagnostic_base_height = 5  # Lower default diagnostic view height
 diagnostic_min_zoom = 3
-diagnostic_max_zoom = 40  # Increased max zoom for more zoomed out view
+diagnostic_max_zoom = 1000  # Increased max zoom for more zoomed out view
 diagnostic_zoom = 25  # Starting with a more zoomed out view
 
     # Score, lives and game state
 score = 0
 lives = 3
 is_game_over = False
+is_game_completed = False
 score_text = Text(
     text='Mushroom Coins collected: 0',
     position=(-0.5, 0.45),
@@ -483,7 +491,79 @@ retry_button = Button(
     position=(0, -0.1),
     parent=camera.ui,
     enabled=False
-)# Store initial player position for respawn
+)
+
+# Functions to handle navigation
+def go_to_marketplace():
+    import subprocess, sys, os
+    venv_python = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 
+                              'venv', 'Scripts', 'python.exe')
+    if not os.path.exists(venv_python):
+        venv_python = sys.executable
+    
+    subprocess.Popen([venv_python, 'marketplace.py'], 
+                    cwd=os.path.dirname(os.path.abspath(__file__)))
+    application.quit()
+    sys.exit()
+
+def go_to_main_menu():
+    import subprocess, sys, os
+    venv_python = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 
+                              'venv', 'Scripts', 'python.exe')
+    if not os.path.exists(venv_python):
+        venv_python = sys.executable
+    
+    subprocess.Popen([venv_python, 'main_menu.py'],
+                    cwd=os.path.dirname(os.path.abspath(__file__)))
+    application.quit()
+    sys.exit()
+
+# Success screen elements
+success_panel = Entity(
+    model='quad',
+    color=color.black66,
+    scale=(2, 1),
+    position=(0, 0),
+    parent=camera.ui,
+    enabled=False
+)
+
+success_text = Text(
+    text='SUCCESS!',
+    scale=4,
+    origin=(0, 0),
+    position=(0, 0.2),
+    color=color.green,
+    parent=camera.ui,
+    enabled=False
+)
+
+time_text = Text(
+    text='Time: 0:00',
+    scale=2,
+    origin=(0, 0),
+    position=(0, 0),
+    color=color.white,
+    parent=camera.ui,
+    enabled=False
+)
+
+marketplace_button = Button(
+    text='Go to Marketplace',
+    color=color.azure,
+    scale=(0.3, 0.1),
+    position=(-0.2, -0.2),
+    parent=camera.ui,
+    enabled=False
+)
+
+menu_button = Button(
+    text='Main Menu',
+    color=color.orange,
+    scale=(0.3, 0.1),
+    position=(0.2, -0.2),
+    parent=camera.ui,
+    enabled=False)# Store initial player position for respawn
 initial_player_position = Vec3(12, 0.25, -32)
 
 # Zoom level indicator
@@ -605,6 +685,9 @@ def check_trap_collision():
             lives -= 1
             lives_text.text = f'Lives: {lives}'
             
+            # Play damage sound
+            damage_sound.play()
+            
             # Check if game over
             if lives <= 0:
                 is_game_over = True
@@ -615,10 +698,6 @@ def check_trap_collision():
             player.position = initial_player_position
             # Reset velocity and animation state
             return True
-        
-        # Debug output
-        if diagnostic_mode:
-            print(f"Current color: R:{r} G:{g} B:{b}")
             
         return False
     except Exception as e:
@@ -630,6 +709,10 @@ def update():
     global current_animation, velocity_y, on_ground, facePosition
     global can_jump, jump_timer, is_dashing, dash_timer, can_dash, dash_cooldown_timer
     
+    # Skip all updates if game is completed (except for animations)
+    if is_game_completed:
+        return
+        
     # Update coin animation
     update_coin_animation()
     
@@ -664,16 +747,23 @@ def update():
         red_coin.enabled = False
         score += 1
         score_text.text = f'Mushroom Coins collected: {score}'
+        mushroom_coin_sound.play()
         
     if green_coin.enabled and check_coin_collection(green_coin, player):
         green_coin.enabled = False
         score += 1
         score_text.text = f'Mushroom Coins collected: {score}'
+        mushroom_coin_sound.play()
         
     if blue_coin.enabled and check_coin_collection(blue_coin, player):
         blue_coin.enabled = False
         score += 1
         score_text.text = f'Mushroom Coins collected: {score}'
+        mushroom_coin_sound.play()
+    
+    # Check for game success (all 3 mushrooms collected)
+    if score == 3:
+        show_success()
     
     moving = False
     squating = False
@@ -899,6 +989,25 @@ def input(key):
         # No zoom controls in normal mode
         pass
 
+# Function to show success screen
+def show_success():
+    global total_time, is_game_completed
+    if not is_game_completed:  # Only calculate time and show screen if not already completed
+        is_game_completed = True
+        total_time = int(time.time() - start_time)
+        minutes = total_time // 60
+        seconds = total_time % 60
+        success_panel.enabled = True
+        success_text.enabled = True
+        time_text.enabled = True
+        marketplace_button.enabled = True
+        menu_button.enabled = True
+        time_text.text = f'Time: {minutes}:{seconds:02d}'
+        # Disable player movement
+        player.enabled = False
+        # Play success sound
+        success_sound.play()
+
 # Function to show game over screen
 def show_game_over():
     game_over_panel.enabled = True
@@ -906,13 +1015,17 @@ def show_game_over():
     retry_button.enabled = True
     # Disable player movement
     player.enabled = False
+    # Play game over sound
+    gameover_sound.play()
 
 def reset_game():
-    global lives, score, is_game_over
+    global lives, score, is_game_over, is_game_completed, start_time
     # Reset game state
     lives = 3
     score = 0
     is_game_over = False
+    is_game_completed = False
+    start_time = time.time()
     lives_text.text = f'Lives: {lives}'
     score_text.text = f'Mushroom Coins collected: {score}'
     
@@ -929,9 +1042,21 @@ def reset_game():
     game_over_panel.enabled = False
     game_over_text.enabled = False
     retry_button.enabled = False
+    
+    # Hide success screen
+    success_panel.enabled = False
+    success_text.enabled = False
+    time_text.enabled = False
+    marketplace_button.enabled = False
+    menu_button.enabled = False
 
-# Set up retry button click handler
+# Set up button click handlers
 retry_button.on_click = reset_game
+marketplace_button.on_click = go_to_marketplace
+menu_button.on_click = go_to_main_menu
+
+# Initialize start time for the game timer
+start_time = time.time()
 
 # Add ambient light for better visibility
 AmbientLight(color=color.rgba(255, 255, 255, 0.5))
