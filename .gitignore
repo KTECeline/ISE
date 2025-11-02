@@ -2,3 +2,5 @@ venv
 tempCodeRunnerFile.py
 __pycache__/
 *.pyc
+game_data.json
+inventory.json

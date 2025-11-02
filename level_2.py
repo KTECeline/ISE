@@ -14,6 +14,11 @@ from level2.powerups import (load_inventory, save_inventory, load_powerup_images
                            draw_powerup_ui, POWERUP_INFO)
 from level2.level_state import reset_level, handle_transport_sequence, update_transport
 import charactermove as char_move
+# Guide module (kept optional so importing level_2 doesn't fail if file missing)
+try:
+    from level2.guide import draw_guide_overlay
+except Exception:
+    draw_guide_overlay = None
 
 # Initialize Pygame
 pygame.init()
@@ -199,6 +204,17 @@ try:
 except Exception:
     drop_sound = None
 
+# Game over SFX (re-using the level 1 gameover wav if present)
+gameover_sound = None
+try:
+    if os.path.exists('assets/sounds/level_1_gameover.wav'):
+        try:
+            gameover_sound = pygame.mixer.Sound('assets/sounds/level_1_gameover.wav')
+        except Exception:
+            gameover_sound = None
+except Exception:
+    gameover_sound = None
+
 # Tunnel transport sound
 tunnel_sound = None
 tunnel_is_music = False
@@ -273,6 +289,8 @@ player_health = player_max_health
 # Frames of temporary invulnerability after taking a bubble hit
 HIT_COOLDOWN_FRAMES = int(0.8 * FPS)
 player_hit_cooldown = 0
+# Guide toggle state
+show_guide = False
 
 # Chest setup (placed in post-transport area)
 CHEST_POS = (5800.0, 895.0)
@@ -350,11 +368,26 @@ class GoalBubble(pygame.sprite.Sprite):
             self.kill()
             return
 
-        # collision with player (simple circle)
+        # collision with player (use sprite center/half-height when available so
+        # the bubble can hit the whole character, not just the feet)
         try:
+            # Default to logical player_pos center
+            center_y = player_pos[1]
+            char_radius = player_radius
+            if character_sprite and getattr(character_sprite, 'rect', None):
+                try:
+                    sprite_h = character_sprite.rect.height
+                    # Character sprite rect is positioned with midbottom at screen center,
+                    # so compute world center approx by offsetting
+                    center_y = player_pos[1] - (sprite_h // 2 - player_radius)
+                    char_radius = max(player_radius, sprite_h // 2)
+                except Exception:
+                    center_y = player_pos[1]
+                    char_radius = player_radius
+
             dx = self.world_x - player_pos[0]
-            dy = self.world_y - player_pos[1]
-            if dx*dx + dy*dy <= (self.radius + player_radius) ** 2:
+            dy = self.world_y - center_y
+            if dx * dx + dy * dy <= (self.radius + char_radius) ** 2:
                 # small knockback
                 dist = math.hypot(dx, dy) or 1.0
                 push = 22.0
@@ -783,6 +816,12 @@ while running:
                 mushroom_ball.stopped = True
             except Exception:
                 pass
+            # Play game over sound when the player dies (if available)
+            try:
+                if 'gameover_sound' in globals() and gameover_sound:
+                    gameover_sound.play()
+            except Exception:
+                pass
 
         if level_failed:
             # wait a short display time then reset the level
@@ -811,6 +850,45 @@ while running:
                 player_speed_multiplier = reset_data['player_speed_multiplier']
                 shoot_speed_multiplier = reset_data['shoot_speed_multiplier']
                 cluster_overlay_timer = reset_data['cluster_overlay_timer']
+
+                # Recreate / reset the mushroom_ball instance to ensure a full restart
+                try:
+                    mushroom_ball = MushroomBall(
+                        initial_pos=[730.0, 8230.0],
+                        radius=15,
+                        frames=ball_frames,
+                        get_shoot_speed_multiplier=lambda: shoot_speed_multiplier,
+                        check_collision_fn=check_collision_wrapper,
+                        BALL_SPEED=BALL_SPEED,
+                        BALL_FRICTION=BALL_FRICTION,
+                        MUSHROOM_ANIM_SCALE=MUSHROOM_ANIM_SCALE,
+                        ROLL_VELOCITY_THRESHOLD=ROLL_VELOCITY_THRESHOLD,
+                        ROLL_FRAME_SPEED=ROLL_FRAME_SPEED,
+                        SQUISH_DURATION=SQUISH_DURATION,
+                        BALL_TRAIL_MAX=BALL_TRAIL_MAX,
+                        BALL_TRAIL_ALPHA=BALL_TRAIL_ALPHA,
+                        WORLD_WIDTH=WORLD_WIDTH,
+                        WORLD_HEIGHT=WORLD_HEIGHT,
+                    )
+                    mushroom_ball.return_timer = 0
+                    mushroom_ball.active = False
+                    mushroom_ball.stopped = True
+                    mushroom_ball.hit_this_shot = False
+                except Exception:
+                    pass
+
+                # update camera to new player pos after reset
+                try:
+                    cam_x, cam_y, screen_shake_timer = update_camera(player_pos, mushroom_ball, cam_x, cam_y,
+                                                                    SCREEN_WIDTH, SCREEN_HEIGHT, WORLD_WIDTH,
+                                                                    WORLD_HEIGHT, screen_shake_timer,
+                                                                    SCREEN_SHAKE_FRAMES)
+                except Exception:
+                    try:
+                        cam_x = player_pos[0] - SCREEN_WIDTH // 2
+                        cam_y = player_pos[1] - SCREEN_HEIGHT // 2
+                    except Exception:
+                        pass
 
     # Update camera to follow player/ball
     cam_x, cam_y, screen_shake_timer = update_camera(player_pos, mushroom_ball, cam_x, cam_y,
@@ -1157,8 +1235,16 @@ while running:
                  WORLD_WIDTH, WORLD_HEIGHT, MINIMAP_SIZE, MINIMAP_ZOOM, goals)
 
     # Info/UI with score
-    info = font.render(f"Pos: ({int(player_pos[0])}, {int(player_pos[1])}) | Score: {score} | Goals left: {len(goals)} | SPACE to shoot! R to reset", True, (255, 255, 255))
+    info = font.render(f"Pos: ({int(player_pos[0])}, {int(player_pos[1])}) | Score: {score} | Goals left: {len(goals)} | SPACE to shoot! R to reset ! Press Y for guide", True, (255, 255, 255))
     screen.blit(info, (10, 10))
+    
+
+    # If the guide overlay is active, draw it on top
+    try:
+        if show_guide and draw_guide_overlay is not None:
+            draw_guide_overlay(screen, font, big_font, SCREEN_WIDTH, SCREEN_HEIGHT)
+    except Exception:
+        pass
 
     # Draw player health bar
     try:

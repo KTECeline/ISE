@@ -3,9 +3,22 @@ import pygame
 def reset_level(player_max_health, WORLD_WIDTH, WORLD_HEIGHT, FORBIDDEN_Y_MAX, 
                NUM_GOALS, check_collision, GOAL_RADIUS, generate_goals):
     """Reset the level to initial state."""
-    from . import goals, goal_sprites, goal_sprite_map
-    from .powerups import powerup_timers, temp_goal_timers
-    
+    # Import modules rather than symbols to avoid circular import issues.
+    try:
+        from . import goals as goals_mod
+    except Exception:
+        goals_mod = None
+    goals = getattr(goals_mod, 'goals', [])
+    goal_sprites = getattr(goals_mod, 'goal_sprites', None)
+    goal_sprite_map = getattr(goals_mod, 'goal_sprite_map', None)
+
+    try:
+        from . import powerups as powerups_mod
+    except Exception:
+        powerups_mod = None
+    powerup_timers = getattr(powerups_mod, 'powerup_timers', None)
+    temp_goal_timers = getattr(powerups_mod, 'temp_goal_timers', None)
+
     # Basic state
     player_pos = [730.0, 8230.0]
     player_health = player_max_health
@@ -17,31 +30,51 @@ def reset_level(player_max_health, WORLD_WIDTH, WORLD_HEIGHT, FORBIDDEN_Y_MAX,
     enemy_projectiles = pygame.sprite.Group()
     popups = []
     
-    # Reset powerups
-    for k in powerup_timers.keys():
-        powerup_timers[k] = 0
-    temp_goal_timers.clear()
+    # Reset powerups (guarded)
     cluster_overlay_timer = 0
-    
-    # Clear and re-generate goals
-    goals[:] = []
-    for gs in list(goal_sprites):
+    if powerup_timers is not None:
         try:
-            gs.kill()
+            for k in list(powerup_timers.keys()):
+                powerup_timers[k] = 0
         except Exception:
             pass
-    goal_sprites.empty()
-    goal_sprite_map.clear()
-    
-    generate_goals(WORLD_WIDTH, WORLD_HEIGHT, FORBIDDEN_Y_MAX, NUM_GOALS, 
-                  check_collision, goal_radius=GOAL_RADIUS, sprite_scale=1.8)
-    
-    # Reset ball
-    mushroom_ball.reset(player_pos)
-    mushroom_ball.active = False
-    mushroom_ball.stopped = True
-    mushroom_ball.return_timer = 0
-    mushroom_ball.hit_this_shot = False
+    if temp_goal_timers is not None:
+        try:
+            temp_goal_timers.clear()
+        except Exception:
+            pass
+
+    # Clear and re-generate goals
+    try:
+        goals[:] = []
+    except Exception:
+        goals = []
+
+    if goal_sprites is not None:
+        try:
+            for gs in list(goal_sprites):
+                try:
+                    gs.kill()
+                except Exception:
+                    pass
+            try:
+                goal_sprites.empty()
+            except Exception:
+                pass
+        except Exception:
+            pass
+
+    if goal_sprite_map is not None:
+        try:
+            goal_sprite_map.clear()
+        except Exception:
+            pass
+
+    generate_goals(WORLD_WIDTH, WORLD_HEIGHT, FORBIDDEN_Y_MAX, NUM_GOALS,
+                   check_collision, goal_radius=GOAL_RADIUS, sprite_scale=1.8)
+
+    # Note: mushroom_ball instance should be recreated by the caller to avoid
+    # cross-module coupling and NameError at import time.
     
     # Reset flow flags
     level_cleared = False

@@ -38,7 +38,7 @@ def save_game_data(data):
         print("[WARN] Could not save game_data.json:", e)
 
 def calculate_score(mushrooms, lives):
-    return int(100 * mushrooms + lives * 16.67)
+    return int((350 / 3) * mushrooms)
 
 # Define sound effects
 mushroom_coin_sound = Audio('assets/sounds/level_1_mushroom-coin-poof.mp3', autoplay=False, loop=False)
@@ -50,8 +50,11 @@ app = Ursina()
 # Remove the internal exit button
 window.exit_button.enabled = False
 
+# Set background to black for out-of-bounds area
+window.color = color.black
+
 # Load and play background music
-bgm_path = os.path.join('assets', 'music', 'Level_1_bgm_In Gloomy Meditation.mp3')
+bgm_path = os.path.join('assets', 'music', 'Level_1_bgm_In_Gloomy_Meditation.mp3')
 pygame.mixer.music.load(bgm_path)
 pygame.mixer.music.play(-1)  # -1 means loop indefinitely
 pygame.mixer.music.set_volume(0.5)  # Set volume to 50%
@@ -298,59 +301,28 @@ particle_count = 50  # Number of particles in the scene
 diagnostic_mode = False
 prev_t_state = False
 
-# Ground state debounce variables
-ground_check_timer = 0
-ground_check_delay = 0.1  # Time in seconds to wait before allowing state change
-last_ground_state = True
-
-# Debug text for collision checking
-collision_debug = Text(
-    text='No collision data',
-    position=(-0.85, -0.35),
-    scale=1.2,
-    origin=(0, 0),
-    background=True,
-    enabled=False  # Hidden by default
-)
-
-# Collision type indicator
-collision_type_text = Text(
-    text='Collision: None',
-    position=(-0.85, -0.40),
-    scale=1.2,
-    origin=(0, 0),
-    background=True,
-    enabled=False  # Hidden by default
-)
-
-# Animation state indicator
-animation_debug_text = Text(
-    text='Animation: idle',
-    position=(-0.85, -0.45),
-    scale=1.2,
-    origin=(0, 0),
-    background=True,
-    enabled=False  # Hidden by default
-)
-
 # Create player with sprite sheet animation
 player = SpriteSheetAnimation(
     'character/chamove', 
-    tileset_size=(7,9),
+    tileset_size=(7,11),
     fps=10,
     animations={
-        'walkright': ((0,7), (5,7)),
-        'walkleft': ((0,8), (5,8)),
-        'idle': ((0,6), (0,6)),
-        'idleLeft': ((1,6), (1,6)),
-        'jumpright' : ((2,6), (2,6)),
-        'jumpleft' : ((3,6), (3,6)),
-        'downright' : ((2,4), (2,4)),
-        'downleft' : ((3,4), (3,4)),
-        'dashright' : ((0,3), (6,3)),
-        'dashleft' : ((0, 2), (6, 2)),
-        'jumpdownRight' : ((0, 1), (3, 1)),
-        'jumpdownLeft' : ((0,9), (3,9))
+        'walkright': ((0,9), (5,9)),
+        'walkleft': ((0,10), (5,10)),
+        'idle': ((0,8), (0,8)),
+        'idleLeft': ((1,8), (1,8)),
+        'jumpright' : ((2,8), (2,8)),
+        'jumpleft' : ((3,8), (3,8)),
+        'downright' : ((2,6), (2,6)),
+        'downleft' : ((3,6), (3,6)),
+        'dashright' : ((3,5), (3,5)),
+        'dashleft' : ((3, 4), (3, 4)),
+        'jumpdownRight' : ((0, 3), (3, 3)),
+        'jumpdownLeft' : ((0,2), (3,2)),
+        'throwRight' : ((0,11), (2,11)),
+        'throwLeft' : ((3,11), (5,11)),
+        'climbRight': ((0,1), (0,1)),
+        'climbLeft' : ((1,1),(1,1))
     },
     position=(12, 0.25, -32) ,
     scale=1.5,
@@ -358,6 +330,23 @@ player = SpriteSheetAnimation(
 )
 
 player.origin = (0, -0.15)
+
+# Create player glow/aura effect (circular)
+player_glow = Entity(
+    parent=player,
+    model='circle',  # Changed to circle for round glow
+    scale=2.2,  # Slightly larger than player
+    position=(0, -0.05, 0),  # Slightly below player on Y axis to appear behind
+    rotation_x=0,  # Match player's rotation
+    color=color.rgba(150, 200, 255, 40),  # Soft blue glow - more transparent
+    alpha=0.15,  # More transparent
+    double_sided=True
+)
+
+# Glow animation properties
+player_glow.pulse_time = 0
+player_glow.base_scale = 2.2
+player_glow.base_alpha = 0.15  # More transparent base alpha
 
 # Initialize particle system
 for i in range(particle_count):
@@ -374,27 +363,37 @@ for i in range(particle_count):
     particles.append(particle)
 
 # Character movement variables
-speed = 5
-gravity = 0.7
+speed = 10
+gravity = 50
 jump_speed = 25
-velocity_y = 0
-on_ground = True
+velocity_z = 0  # Changed from velocity_y to velocity_z for Z-axis movement
+on_ground = False  # Start in air to force falling
 current_animation = 'idle'
 facePosition = 'right'
 
 # Jump cooldown
 can_jump = True
-jump_cooldown = 0.6
+double_jump = False
+jump_cooldown = 2
 jump_timer = 0
 
 # Dash variables
 is_dashing = False
-dash_speed = 12
+dash_speed = 23
 dash_duration = 0.25
 dash_timer = 0
 dash_cooldown = 1.0
 can_dash = True
 dash_cooldown_timer = 0
+
+# Wall jump variables
+on_wall = False
+wall_jump_cooldown = 0.2
+wall_jump_timer = 0
+
+# Collision resolution settings
+collision_push_distance = 0.05
+max_push_attempts = 5
 
 # Position adjustment values
 x_offset = 27  # Decrease to move right, increase to move left
@@ -444,6 +443,25 @@ red_coin.frame_duration = 0.2    # Time per frame in seconds
 green_coin.frame_duration = 0.2  # Time per frame in seconds
 blue_coin.frame_duration = 0.2   # Time per frame in seconds
 
+# Idle pulsing animation variables
+red_coin.pulse_time = 0
+green_coin.pulse_time = 0
+blue_coin.pulse_time = 0
+red_coin.base_scale = 1
+green_coin.base_scale = 1
+blue_coin.base_scale = 1
+
+# Collection animation variables
+red_coin.is_collecting = False
+green_coin.is_collecting = False
+blue_coin.is_collecting = False
+red_coin.collect_time = 0
+green_coin.collect_time = 0
+blue_coin.collect_time = 0
+red_coin.collect_duration = 0.5  # Duration of expand animation before disappearing
+green_coin.collect_duration = 0.5
+blue_coin.collect_duration = 0.5
+
 def update_coin_animation():
     # Update red coin
     red_coin.animation_time += time.dt
@@ -468,6 +486,59 @@ def update_coin_animation():
         blue_coin.frame = (blue_coin.frame + 1) % 5
         blue_coin.texture_offset = (blue_coin.frame/5, 0)
         blue_coin.animation_time = 0
+    
+    # Idle pulsing animation for red coin
+    if red_coin.enabled and not red_coin.is_collecting:
+        red_coin.pulse_time += time.dt * 3  # Speed of pulsing
+        pulse_scale = red_coin.base_scale + math.sin(red_coin.pulse_time) * 0.15  # Pulse between 0.85 and 1.15
+        red_coin.scale = (pulse_scale, pulse_scale)
+    
+    # Idle pulsing animation for green coin
+    if green_coin.enabled and not green_coin.is_collecting:
+        green_coin.pulse_time += time.dt * 3
+        pulse_scale = green_coin.base_scale + math.sin(green_coin.pulse_time) * 0.15
+        green_coin.scale = (pulse_scale, pulse_scale)
+    
+    # Idle pulsing animation for blue coin
+    if blue_coin.enabled and not blue_coin.is_collecting:
+        blue_coin.pulse_time += time.dt * 3
+        pulse_scale = blue_coin.base_scale + math.sin(blue_coin.pulse_time) * 0.15
+        blue_coin.scale = (pulse_scale, pulse_scale)
+    
+    # Collection animation for red coin
+    if red_coin.is_collecting:
+        red_coin.collect_time += time.dt
+        # Expand animation (scale from 1 to 2.5)
+        expand_progress = red_coin.collect_time / red_coin.collect_duration
+        expand_scale = 1 + (expand_progress * 1.5)  # Grows from 1 to 2.5
+        red_coin.scale = (expand_scale, expand_scale)
+        
+        # Disable after animation completes
+        if red_coin.collect_time >= red_coin.collect_duration:
+            red_coin.enabled = False
+            red_coin.is_collecting = False
+    
+    # Collection animation for green coin
+    if green_coin.is_collecting:
+        green_coin.collect_time += time.dt
+        expand_progress = green_coin.collect_time / green_coin.collect_duration
+        expand_scale = 1 + (expand_progress * 1.5)
+        green_coin.scale = (expand_scale, expand_scale)
+        
+        if green_coin.collect_time >= green_coin.collect_duration:
+            green_coin.enabled = False
+            green_coin.is_collecting = False
+    
+    # Collection animation for blue coin
+    if blue_coin.is_collecting:
+        blue_coin.collect_time += time.dt
+        expand_progress = blue_coin.collect_time / blue_coin.collect_duration
+        expand_scale = 1 + (expand_progress * 1.5)
+        blue_coin.scale = (expand_scale, expand_scale)
+        
+        if blue_coin.collect_time >= blue_coin.collect_duration:
+            blue_coin.enabled = False
+            blue_coin.is_collecting = False
 
 # Create camera positioned above the player for top-down view
 camera.position = (0, 21, 0)  # Set default height to 21
@@ -504,6 +575,15 @@ lives_text = Text(
     scale=1.2,
     origin=(0, 0),
     background=True
+)
+
+guide_hint_text = Text(
+    text='Hold "Y" for Guide',
+    position=(0.35, 0.45),
+    scale=1.2,
+    origin=(0, 0),
+    background=True,
+    color=color.yellow
 )
 
 # Game Over screen elements
@@ -619,11 +699,106 @@ zoom_indicator = Text(
     enabled=False  # Hidden
 )
 
+# Info/Guide Panel (shown when Y is held)
+info_panel = Entity(
+    model='quad',
+    color=color.black66,
+    scale=(2, 1),
+    position=(0, 0),
+    parent=camera.ui,
+    enabled=False
+)
+
+info_title = Text(
+    text='GAME GUIDE',
+    scale=3,
+    origin=(0, 0),
+    position=(0, 0.4),
+    color=color.yellow,
+    parent=camera.ui,
+    enabled=False
+)
+
+info_text = Text(
+    text='''
+1) Collect 3 Mushroom Coins to pass
+   They're located throughout the map
+
+2) Be careful! Take damage from spikes
+   three times and it's game over!
+
+3) Control movements:
+   - A/D: Move left/right
+   - Space: Jump
+   - Shift: Dash
+   - S: Duck (on ground) / Fast fall (in air)
+
+4) Q/E or mouse scroll to zoom in and out
+
+5) Press "T" to toggle diagnostic view
+   and see what happens!
+''',
+    scale=1.5,
+    origin=(0, 0),
+    position=(0, -0.05),
+    color=color.white,
+    parent=camera.ui,
+    enabled=False,
+    line_height=1.2
+)
+
+# Track Y key state for info display
+show_info = False
+prev_y_state = False
+
 def check_coin_collection(coin, player):
     # Calculate distance between player and coin
     distance = (coin.position - player.position).length()
     # If player is close enough to coin (within 1 unit)
     return distance < 1
+
+def resolve_collision(x, z, original_x, original_z):
+    """Try to push the character out of collision in the best direction."""
+    # Try different push directions
+    directions = [
+        (original_x - x, original_z - z),  # Opposite of movement
+        (0, collision_push_distance),      # Up
+        (0, -collision_push_distance),     # Down
+        (collision_push_distance, 0),      # Right
+        (-collision_push_distance, 0),     # Left
+        (collision_push_distance, collision_push_distance),   # Up-Right
+        (-collision_push_distance, collision_push_distance),  # Up-Left
+        (collision_push_distance, -collision_push_distance),  # Down-Right
+        (-collision_push_distance, -collision_push_distance), # Down-Left
+    ]
+    
+    for dx, dz in directions:
+        new_x = x + dx
+        new_z = z + dz
+        if not check_collision(Vec3(new_x, player.y, new_z)):
+            return new_x, new_z
+    
+    # If all else fails, return to original position
+    return original_x, original_z
+
+def check_collision_at_position(x, z, radius=0.3):
+    """Check multiple points around the character to prevent sticking."""
+    points = [
+        (x, z),  # center
+        (x - radius, z),  # left
+        (x + radius, z),  # right
+        (x, z - radius),  # bottom
+        (x, z + radius),  # top
+        (x - radius * 0.7, z - radius * 0.7),  # bottom-left
+        (x + radius * 0.7, z - radius * 0.7),  # bottom-right
+        (x - radius * 0.7, z + radius * 0.7),  # top-left
+        (x + radius * 0.7, z + radius * 0.7),  # top-right
+    ]
+    
+    for px, pz in points:
+        if check_collision(Vec3(px, player.y, pz)):
+            return True
+    return False
 
 def check_collision(new_position):
     """Check if new position would collide with a wall or trap"""
@@ -637,9 +812,6 @@ def check_collision(new_position):
         # Get color at position from collision map
         color = collision_ground.texture.get_pixel(tex_x, tex_z)
         
-        # Debug color information
-        collision_debug.text = f'Pos: ({tex_x}, {tex_z}) Color: R:{int(color[0]*255)} G:{int(color[1]*255)} B:{int(color[2]*255)}'
-        
         # Check if it's near the wall color (ED1C24 - red) with some tolerance
         is_wall = (abs(color[0] - 237/255) < 0.1 and 
                   abs(color[1] - 28/255) < 0.1 and 
@@ -650,22 +822,8 @@ def check_collision(new_position):
                   abs(color[1] - 199/255) < 0.1 and 
                   abs(color[2] - 34/255) < 0.1)
         
-        # Update collision type indicator
-        if is_wall:
-            collision_type_text.text = 'Collision: WALL (Red)'
-        elif is_trap:
-            collision_type_text.text = 'Collision: TRAP (Green)'
-        else:
-            collision_type_text.text = 'Collision: None (Safe)'
-        
         return is_wall
     except Exception as e:
-        collision_debug.text = f'Error: {str(e)}'
-        collision_type_text.text = 'Collision: ERROR'
-        return True  # Assume collision on error
-    except Exception as e:
-        collision_debug.text = f'Error: {str(e)}'
-        collision_type_text.text = 'Collision: ERROR'
         return True  # Assume collision on error
 
 def check_ground(position):
@@ -752,15 +910,14 @@ def check_trap_collision():
         return False
 
 def update():
-    global current_animation, velocity_y, on_ground, facePosition
+    global current_animation, velocity_z, on_ground, facePosition
     global can_jump, jump_timer, is_dashing, dash_timer, can_dash, dash_cooldown_timer
+    global on_wall, wall_jump_timer
 
     moving = False
     squating = False
     #character value
-    global score, diagnostic_mode, prev_t_state
-    global current_animation, velocity_y, on_ground, facePosition
-    global can_jump, jump_timer, is_dashing, dash_timer, can_dash, dash_cooldown_timer
+    global score, diagnostic_mode, prev_t_state, show_info, prev_y_state
     
     # Skip all updates if game is completed (except for animations)
     if is_game_completed:
@@ -769,9 +926,28 @@ def update():
     # Update coin animation
     update_coin_animation()
     
+    # Update player glow animation (pulsing effect)
+    player_glow.pulse_time += time.dt * 2  # Pulse speed
+    pulse = math.sin(player_glow.pulse_time) * 0.15  # Pulse range
+    player_glow.scale = player_glow.base_scale + pulse
+    
+    # Adjust glow intensity based on player state
+    if is_dashing:
+        # Brighter and more intense during dash
+        player_glow.color = color.rgba(180, 220, 255, 60)
+        player_glow.alpha = 0.25
+    elif not on_ground:
+        # Slightly brighter when jumping/in air
+        player_glow.color = color.rgba(160, 210, 255, 50)
+        player_glow.alpha = 0.2
+    else:
+        # Normal subtle glow
+        player_glow.color = color.rgba(150, 200, 255, 40)
+        player_glow.alpha = 0.15
+    
     # Check if player is on a trap
     if check_trap_collision():
-        velocity_y = 0
+        velocity_z = 0
         on_ground = True
         is_dashing = False
     
@@ -780,10 +956,19 @@ def update():
         diagnostic_mode = not diagnostic_mode
     prev_t_state = held_keys['t']
     
-    # Update UI elements based on diagnostic mode
-    collision_debug.enabled = diagnostic_mode
-    collision_type_text.enabled = diagnostic_mode
-    animation_debug_text.enabled = diagnostic_mode
+    # Show info panel when Y is held
+    if held_keys['y']:
+        if not show_info:
+            show_info = True
+            info_panel.enabled = True
+            info_title.enabled = True
+            info_text.enabled = True
+    else:
+        if show_info:
+            show_info = False
+            info_panel.enabled = False
+            info_title.enabled = False
+            info_text.enabled = False
     
     # Always update collision info at current position for diagnostic display
     if diagnostic_mode:
@@ -796,20 +981,23 @@ def update():
         camera.rotation_x = lerp(camera.rotation_x, 90, time.dt * 5)
     
     # Check coin collection
-    if red_coin.enabled and check_coin_collection(red_coin, player):
-        red_coin.enabled = False
+    if red_coin.enabled and not red_coin.is_collecting and check_coin_collection(red_coin, player):
+        red_coin.is_collecting = True
+        red_coin.collect_time = 0
         score += 1
         score_text.text = f'Mushroom Coins collected: {score}'
         mushroom_coin_sound.play()
         
-    if green_coin.enabled and check_coin_collection(green_coin, player):
-        green_coin.enabled = False
+    if green_coin.enabled and not green_coin.is_collecting and check_coin_collection(green_coin, player):
+        green_coin.is_collecting = True
+        green_coin.collect_time = 0
         score += 1
         score_text.text = f'Mushroom Coins collected: {score}'
         mushroom_coin_sound.play()
         
-    if blue_coin.enabled and check_coin_collection(blue_coin, player):
-        blue_coin.enabled = False
+    if blue_coin.enabled and not blue_coin.is_collecting and check_coin_collection(blue_coin, player):
+        blue_coin.is_collecting = True
+        blue_coin.collect_time = 0
         score += 1
         score_text.text = f'Mushroom Coins collected: {score}'
         mushroom_coin_sound.play()
@@ -818,13 +1006,6 @@ def update():
     if score == 3:
         show_success()
     
-    moving = False
-    squating = False
-    
-    # Update animation debug BEFORE any animation changes
-    if diagnostic_mode:
-        animation_debug_text.text = f'Animation: {current_animation} | Moving: {moving} | OnGround: {on_ground} | Dashing: {is_dashing}'
-
     # --- update jump cooldown ---
     if not can_jump:
         jump_timer += time.dt
@@ -839,165 +1020,216 @@ def update():
             can_dash = True
             dash_cooldown_timer = 0
 
+    # Store original position for collision resolution
+    original_x, original_z = player.x, player.z
+
     # --- DASH movement ---
     if is_dashing:
         dash_timer += time.dt
-        move_amount = dash_speed * time.dt
-        
         if facePosition == 'right':
-            new_pos = Vec3(player.x + move_amount, player.y, player.z)
+            next_x = player.x + dash_speed * time.dt
+            if not check_collision_at_position(next_x, player.z):
+                player.x = next_x
+            else:
+                # Resolve collision during dash
+                player.x, player.z = resolve_collision(player.x, player.z, original_x, original_z)
         else:
-            new_pos = Vec3(player.x - move_amount, player.y, player.z)
-        
-        # Check collision before moving
-        if not check_collision(new_pos):
-            player.position = new_pos
-            
+            next_x = player.x - dash_speed * time.dt
+            if not check_collision_at_position(next_x, player.z):
+                player.x = next_x
+            else:
+                player.x, player.z = resolve_collision(player.x, player.z, original_x, original_z)
         if dash_timer >= dash_duration:
             is_dashing = False
             dash_timer = 0
-            if on_ground:
-                if facePosition == 'right':
-                    player.play_animation('idle')
-                    current_animation = 'idle'
-                else:
-                    player.play_animation('idleLeft')
-                    current_animation = 'idleLeft'
-
-    # --- Normal movement (only if not dashing) ---
-    if not is_dashing:
-        # Right movement (D key)
-        if held_keys['d'] and not held_keys['s']:
-            new_pos = Vec3(player.x + time.dt * speed, player.y, player.z)
-            if not check_collision(new_pos):
-                player.x = new_pos.x
-                if current_animation != 'walkright' and current_animation != 'jumpright':
-                    if on_ground:
-                        player.play_animation('walkright')
-                        current_animation = 'walkright'
-                        facePosition = 'right'
-            moving = True
-
-        # Left movement (A key)
-        elif held_keys['a'] and not held_keys['s']:
-            new_pos = Vec3(player.x - time.dt * speed, player.y, player.z)
-            if not check_collision(new_pos):
-                player.x = new_pos.x
-                if current_animation != 'walkleft' and current_animation != 'jumpleft':
-                    if on_ground:
-                        player.play_animation('walkleft')
-                        current_animation = 'walkleft'
-                        facePosition = 'left'
-            moving = True
-
-        # Forward movement (W key)
-        if held_keys['w'] and not held_keys['s']:
-            new_pos = Vec3(player.x, player.y, player.z + time.dt * speed)
-            if not check_collision(new_pos):
-                player.z = new_pos.z
-            moving = True
-
-        # Backward movement (S key) - only when on ground
-        if held_keys['s'] and on_ground:
-            new_pos = Vec3(player.x, player.y, player.z - time.dt * speed)
-            if not check_collision(new_pos):
-                player.z = new_pos.z
-            if facePosition == 'right':
-                player.play_animation('downright')
-                current_animation = 'downright'
-            else:
-                player.play_animation('downleft')
-                current_animation = 'downleft'
-            moving = True
-            squating = True
-
-        # --- jumpdown feature ---
-        if held_keys['s'] and not on_ground and velocity_y > -5:
-            # faster fall when pressing S in air
-            velocity_y = -20  # strong downward speed
-            if facePosition == 'right':
-                player.play_animation('jumpdownRight')
-                current_animation = 'jumpdownRight'
-            else:
-                player.play_animation('jumpdownLeft')
-                current_animation = 'jumpdownLeft'
-
-        # --- Dash key pressed ---
-        if held_keys['shift'] and not is_dashing and can_dash:
-            is_dashing = True
-            can_dash = False
-            dash_timer = 0
-            if facePosition == 'right':
-                player.play_animation('dashright')
-                current_animation = 'dashright'
-            else:
-                player.play_animation('dashleft')
-                current_animation = 'dashleft'
-
-    if on_ground and not current_animation.startswith('walk') and not current_animation.startswith('down') and not current_animation.startswith('dash'):
-        if facePosition == 'right':
-            player.play_animation('idle')
-            current_animation = 'idle'
-        else:
-            player.play_animation('idleLeft')
-            current_animation = 'idleLeft'
-
-    # --- Apply gravity ---
-    if not on_ground:
-        velocity_y -= gravity
-        player.y += velocity_y * time.dt
-        
-        # Check if player has landed on ground
-        if check_ground(player.position):
-            player.y = 0.25
-            velocity_y = 0
-            on_ground = True
-            # Reset to idle animation when landing
+ 
             if facePosition == 'right':
                 player.play_animation('idle')
                 current_animation = 'idle'
             else:
                 player.play_animation('idleLeft')
                 current_animation = 'idleLeft'
-        elif player.y <= 0.25:
-            # Fallback if player goes too low
-            player.y = 0.25
-            velocity_y = 0
-            on_ground = True
-    else:
-        # Ground state check with debounce
-        global ground_check_timer, last_ground_state
-        ground_check_timer += time.dt
-        
-        # Only check ground state after delay
-        if ground_check_timer >= ground_check_delay:
-            check_pos = player.position
-            current_ground_check = check_ground(check_pos)
-            
-            # Only update state if it's been stable
-            if current_ground_check != last_ground_state:
-                ground_check_timer = 0  # Reset timer
-                last_ground_state = current_ground_check
-                
-                if not current_ground_check:
-                    on_ground = False
-                    if facePosition == 'right':
-                        player.play_animation('jumpright')
-                        current_animation = 'jumpright'
-                    else:
-                        player.play_animation('jumpleft')
-                        current_animation = 'jumpleft'
+
+    # --- Normal movement ---
+    if not is_dashing:
+        wall_left = check_collision_at_position(player.x - 0.3, player.z)
+        wall_right = check_collision_at_position(player.x + 0.3, player.z)
+        touching_wall = wall_left or wall_right
+
+        # Update wall status
+        if touching_wall and not on_ground:
+            on_wall = True
+            # Maintain climbing pose while on wall
+            if wall_left:
+                facePosition = 'left'
+            elif wall_right:
+                facePosition = 'right'
+            if current_animation not in ['climbRight', 'climbLeft']:
+                anim = 'climbRight' if facePosition == 'right' else 'climbLeft'
+                player.play_animation(anim)
+                current_animation = anim
+        else:
+            on_wall = False
+
+        # Only allow horizontal movement if not on wall
+        if not on_wall:
+            if held_keys['d'] and not held_keys['s']:
+                next_x = player.x + time.dt * speed
+                if not check_collision_at_position(next_x, player.z):
+                    player.x = next_x
                 else:
-                    on_ground = True
+                    # Try to resolve collision
+                    player.x, player.z = resolve_collision(player.x, player.z, original_x, original_z)
+                if current_animation != 'walkright' and on_ground:
+                    player.play_animation('walkright')
+                    current_animation = 'walkright'
+                    facePosition = 'right'
+                moving = True
+
+            elif held_keys['a'] and not held_keys['s']:
+                next_x = player.x - time.dt * speed
+                if not check_collision_at_position(next_x, player.z):
+                    player.x = next_x
+                else:
+                    player.x, player.z = resolve_collision(player.x, player.z, original_x, original_z)
+                if current_animation != 'walkleft' and on_ground:
+                    player.play_animation('walkleft')
+                    current_animation = 'walkleft'
+                    facePosition = 'left'
+                moving = True
+
+        if not hasattr(player, 'jump_count'):
+            player.jump_count = 0
+        if not hasattr(player, 'space_held'):
+            player.space_held = False
+
+        # Regular jump
+        if held_keys['space']:
+            if not player.space_held:
+                player.space_held = True
+
+                if on_ground:
+                    # Normal jump
+                    velocity_z = jump_speed
+                    on_ground = False
+                    if velocity_z >= 0:
+                        if held_keys['a']:
+                            facePosition = 'left'
+                        elif held_keys['d']:
+                            facePosition = 'right'
+                    anim = 'jumpright' if facePosition == 'right' else 'jumpleft'
+                    player.play_animation(anim)
+                    current_animation = anim
+
+                elif on_wall and wall_jump_timer <= 0:
+                    # Wall jump
+                    velocity_z = jump_speed + 5  # slightly less vertical
+                    # Push away from wall
+                    if wall_left:
+                        player.x += 0.3
+                        facePosition = 'left'
+                    elif wall_right:
+                        player.x -= 0.3
+                        facePosition = 'right'
+
+                    on_wall = False
+                    wall_jump_timer = wall_jump_cooldown
+
+                    anim = 'jumpright' if facePosition == 'right' else 'jumpleft'
+                    player.play_animation(anim)
+                    current_animation = anim
+        else:
+            player.space_held = False
+
+        # wall jump cooldown timer
+        if wall_jump_timer > 0:
+            wall_jump_timer -= time.dt
+
+        # Slow fall when on wall
+        if on_wall and velocity_z < 0:
+            velocity_z = -5
+
+        # Fall faster (only when not on wall)
+        if held_keys['s'] and not on_ground and not on_wall:
+            velocity_z = -45
+            anim = 'jumpdownRight' if facePosition == 'right' else 'jumpdownLeft'
+            player.play_animation(anim)
+            current_animation = anim
+
+        # Dash
+        if held_keys['shift'] and not is_dashing and can_dash and not on_wall:
+            is_dashing = True
+            can_dash = False
+            dash_timer = 0
+            anim = 'dashright' if facePosition == 'right' else 'dashleft'
+            player.play_animation(anim)
+            current_animation = anim
+
+        # Squat (only when on ground)
+        if held_keys['s'] and on_ground and not is_dashing:
+            anim = 'downright' if facePosition == 'right' else 'downleft'
+            player.play_animation(anim)
+            current_animation = anim
+            moving = True
+            squating = True
+
+
+    # --- ALWAYS APPLY GRAVITY until collision is reached ---
+    if not on_ground:
+        velocity_z -= gravity * time.dt
+        next_z = player.z + velocity_z * time.dt
+
+        
+        if not check_collision_at_position(player.x, next_z):
+            player.z = next_z
+            # Continue falling - update animation to falling state
+            if velocity_z < 0 and not is_dashing and not current_animation in ['jumpdownRight', 'jumpdownLeft'] and not on_wall:
+                if held_keys['a']:
+                    facePosition = 'left'
+                elif held_keys['d']:
+                    facePosition = 'right'
+                anim = 'jumpright' if facePosition == 'right' else 'jumpleft'
+                player.play_animation(anim)
+                current_animation = anim
+                
+                if current_animation != anim:
+                    player.play_animation(anim)
+                    current_animation = anim
+            elif velocity_z < 0 and current_animation in ['dashright', 'dashleft']:
+                anim = 'dashright' if facePosition == 'right' else 'dashleft'
+                player.play_animation(anim)
+                current_animation = anim
+        else:
+            # Landed - resolve vertical collision
+            if velocity_z < 0:  # Falling down
+                on_ground = True
+                player.jump_count = 0
+                velocity_z = 0
+                # Push up until not colliding
+                for i in range(max_push_attempts):
+                    if not check_collision_at_position(player.x, player.z):
+                        break
+                    player.z += collision_push_distance
+                # Set idle animation after landing
+                anim = 'idle' if facePosition == 'right' else 'idleLeft'
+                player.play_animation(anim)
+                current_animation = anim
+            else:  # Hitting ceiling
+                velocity_z = min(velocity_z, 0)  # Stop upward movement
+                # Push down a bit
+                player.z -= collision_push_distance
+
+    # Force falling if not on ground and no vertical movement
+    if on_ground and not check_collision_at_position(player.x, player.z - 0.1):
+        on_ground = False
+        velocity_z = -1  # Start falling slowly
 
     # --- Idle ---
-    if on_ground and not moving and not is_dashing and current_animation != 'idle':
-        if facePosition == 'right':
-            player.play_animation('idle')
-            current_animation = 'idle'
-        else:
-            player.play_animation('idleLeft')
-            current_animation = 'idleLeft'
+    if on_ground and not moving and not is_dashing and not squating and not on_wall:
+        if current_animation not in ['idle', 'idleLeft']:
+            anim = 'idle' if facePosition == 'right' else 'idleLeft'
+            player.play_animation(anim)
+            current_animation = anim
     
     # Camera follows player with offset in diagnostic mode
     if diagnostic_mode:
@@ -1019,8 +1251,14 @@ def update():
             player.z + camera_offset
         )
     else:
-        # Normal mode - fixed camera height at 21
-        camera.position = (player.x, 21, player.z + 2)  # Added offset to z to see more of the terrain ahead
+        # Normal mode - follow player with Q/E zoom controls
+        if held_keys['q']:
+            camera.y += zoom_speed * time.dt * 10
+            camera.y = clamp(camera.y, min_height, max_height)
+        if held_keys['e']:
+            camera.y -= zoom_speed * time.dt * 10
+            camera.y = clamp(camera.y, min_height, max_height)
+        camera.position = (player.x, camera.y, player.z)
     
     # Update zoom indicator
     zoom_indicator.text = f'Height: {int(camera.y)}'
@@ -1039,8 +1277,12 @@ def input(key):
             diagnostic_zoom += zoom_speed * 4
             diagnostic_zoom = clamp(diagnostic_zoom, diagnostic_min_zoom, diagnostic_max_zoom)
     else:
-        # No zoom controls in normal mode
-        pass
+        if key == 'scroll up':
+            camera.y -= zoom_speed
+            camera.y = clamp(camera.y, min_height, max_height)
+        if key == 'scroll down':
+            camera.y += zoom_speed
+            camera.y = clamp(camera.y, min_height, max_height)
 
 # Function to show success screen
 def show_success():
@@ -1053,6 +1295,7 @@ def show_success():
         
         # Update game data
         game_data["mushrooms"] += score  # Add collected mushrooms
+        game_data["mushrooms"] = min(game_data["mushrooms"], 3)  # Cap at 3 mushrooms
         game_data["lives"] = lives  # Update remaining lives
         game_data["score"] = calculate_score(game_data["mushrooms"], lives)  # Update total score
         if 2 not in game_data["unlocked_levels"]:
@@ -1087,16 +1330,26 @@ def show_game_over():
 
 def reset_game():
     global lives, score, is_game_over, is_game_completed, start_time, game_data
-    # Reload game data to get current lives
+    global velocity_z, on_ground, current_animation, facePosition
+    # Reload game data
     game_data = load_game_data()
+    # Reset lives to 3 when restarting after game over
+    lives = 3
+    game_data["lives"] = 3
+    save_game_data(game_data)
     # Reset game state
-    lives = game_data["lives"]
     score = 0  # Reset mushrooms collected in this level
     is_game_over = False
     is_game_completed = False
     start_time = time.time()
     lives_text.text = f'Lives: {lives}'
     score_text.text = f'Mushroom Coins collected: {score}'
+    
+    # Reset player physics
+    velocity_z = 0
+    on_ground = False
+    current_animation = 'idle'
+    facePosition = 'right'
     
     # Reset player
     player.enabled = True
