@@ -15,23 +15,37 @@ from random import uniform, randint
 # -------------------------
 # Configuration
 # -------------------------
-BG_PATH = r"C:\Users\Xdimt\Downloads\background.img.png"
+BG_PATH = r"assets/images/background.img.png"
 STORY_BG_PATHS = [
-    r"C:\Users\Xdimt\Downloads\story_Background1.png",
-    r"C:\Users\Xdimt\Downloads\story_Background2.png", 
-    r"C:\Users\Xdimt\Downloads\story_Background3.png",
-    r"C:\Users\Xdimt\Downloads\story_Background4.png"
+    r"assets/images/story_Background1.png",
+    r"assets/images/story_Background2.png", 
+    r"assets/images/story_Background3.png",
+    r"assets/images/story_Background4.png"
 ]
 FONT_PATH = os.path.join("assets", "fonts", "skooled_serif.ttf")
-HOVER_SFX = r"C:\Users\Xdimt\Downloads\Hover.mp3"
-CLICK_SFX = r"C:\Users\Xdimt\Downloads\Click.mp3"
-MUSIC_PATH = r"C:\Users\Xdimt\Downloads\Background_music.mp3"
+HOVER_SFX = r"assets/sounds/Hover.mp3"
+CLICK_SFX = r"assets/sounds/Click.mp3"
+MUSIC_PATH = r"assets/sounds/Background_music.mp3"
 
 # Voice audio paths
+# Map individual intro scene voices (Intro_1..Intro_5) and other dialogue
 VOICE_PATHS = {
-    "story_intro": r"C:\Users\Xdimt\Downloads\voice_story_intro.mp3",
-    "wm_greeting": r"C:\Users\Xdimt\Downloads\voice_wm_greeting.mp3"
+    "intro_1": r"assets/voice/Intro_1.mp3",
+    "intro_2": r"assets/voice/Intro_2.mp3",
+    "intro_3": r"assets/voice/Intro_3.mp3",
+    "intro_4": r"assets/voice/Intro_4.mp3",
+    "intro_5": r"assets/voice/Intro_5.mp3",
+    "story_intro": r"assets/sounds/intro.mpeg",
+    "wm_greeting": r"assets/sounds/greeting.mpeg"
 }
+# Greeting voice files for Wise Mushroom (per-line)
+VOICE_PATHS.update({
+    "greeting_1": r"assets/voice/Greeting_1.mp3",
+    "greeting_2": r"assets/voice/Greeting_2.mp3",
+    "greeting_3": r"assets/voice/Greeting_3.mp3",
+    "greeting_4": r"assets/voice/Greeting_4.mp3",
+    "greeting_5": r"assets/voice/Greeting_5.mp3",
+})
 
 SCREEN_WIDTH = 1280
 SCREEN_HEIGHT = 720
@@ -169,12 +183,29 @@ if mixer_ok:
         # Load voice sounds if they exist
         for voice_key, voice_path in VOICE_PATHS.items():
             if os.path.exists(voice_path):
-                voice_sounds[voice_key] = mixer.Sound(voice_path)
-                print(f"[INFO] Loaded voice: {voice_key}")
+                try:
+                    voice_sounds[voice_key] = mixer.Sound(voice_path)
+                    print(f"[INFO] Loaded voice: {voice_key}")
+                except Exception as e:
+                    print(f"[WARN] Could not load voice {voice_path}: {e}")
             else:
                 print(f"[INFO] Voice file not found: {voice_path}")
     except Exception as e:
         print("[WARN] Sound load/play failed:", e)
+
+
+def stop_all_voice():
+    """Stop any currently playing voice sounds."""
+    if not mixer_ok:
+        return
+    try:
+        for v in list(voice_sounds.values()):
+            try:
+                v.stop()
+            except Exception:
+                pass
+    except Exception:
+        pass
 
 # -------------------------
 # Game data load/save
@@ -316,7 +347,12 @@ class Button:
 # Story scene typing effect with audio support and background transitions
 # -------------------------
 class StoryTypingEffect:
-    def __init__(self, lines, font, color=STORY_TEXT_COLOR, voice_key=None, backgrounds=None):
+    def __init__(self, lines, font, color=STORY_TEXT_COLOR, voice_key=None, voice_keys=None, backgrounds=None):
+        """
+        lines: list of strings
+        voice_key: legacy single voice key (kept for compatibility)
+        voice_keys: optional list of voice keys, one per line (preferred)
+        """
         self.lines = lines
         self.font = font
         self.color = color
@@ -327,8 +363,12 @@ class StoryTypingEffect:
         self.line_delay = 1500  # ms between lines
         self.finished = False
         self.waiting_for_next = False
-        self.voice_played = False
+        # track which lines' voice we've already played
+        self.voice_played_lines = set()
+        # legacy single key
         self.voice_key = voice_key
+        # per-line keys preferred
+        self.voice_keys = voice_keys or []
         self.backgrounds = backgrounds or []
         self.current_bg_index = 0
         self.bg_transition_alpha = 0
@@ -343,10 +383,9 @@ class StoryTypingEffect:
             self.last_update_time = current_time
             self.current_char += 1
             
-            # Play voice when starting the first line (only once)
-            if self.current_line == 0 and self.current_char == 1 and self.voice_key and not self.voice_played:
-                self.play_voice()
-                self.voice_played = True
+            # Play per-line voice when the first character appears for that line
+            if self.current_char == 1:
+                self.play_voice_for_current_line()
             
             # Handle background transitions based on line progress
             self.update_background_transitions()
@@ -371,16 +410,58 @@ class StoryTypingEffect:
                 self.bg_transition_alpha = 0
                 
     def play_voice(self):
+        # Legacy single-key playback
         if self.voice_key and self.voice_key in voice_sounds:
             try:
                 voice_sounds[self.voice_key].play()
                 print(f"[INFO] Playing voice: {self.voice_key}")
             except Exception as e:
                 print(f"[WARN] Could not play voice {self.voice_key}: {e}")
+
+    def play_voice_for_current_line(self):
+        """Play the voice corresponding to the current line (if available).
+        Stops any currently playing voice for this line if user skips.
+        """
+        # Determine key: prefer voice_keys list, fall back to single voice_key
+        key = None
+        if self.current_line < len(self.voice_keys):
+            key = self.voice_keys[self.current_line]
+        elif self.voice_key:
+            key = self.voice_key
+
+        if not key:
+            return
+
+        # Avoid replaying the same line's voice
+        if self.current_line in self.voice_played_lines:
+            return
+
+        # Try to stop any previous voice (best-effort)
+        try:
+            stop_all_voice()
+        except Exception:
+            pass
+
+        if key in voice_sounds:
+            try:
+                voice_sounds[key].play()
+                print(f"[INFO] Playing voice: {key} for line {self.current_line}")
+            except Exception as e:
+                print(f"[WARN] Could not play voice {key}: {e}")
+
+        self.voice_played_lines.add(self.current_line)
                 
     def skip_or_next(self):
         if self.waiting_for_next:
             # Move to next line
+            # stop current line voice when advancing
+            try:
+                if self.current_line < len(self.voice_keys):
+                    k = self.voice_keys[self.current_line]
+                    if k in voice_sounds:
+                        voice_sounds[k].stop()
+            except Exception:
+                pass
             self.current_line += 1
             self.current_char = 0
             self.waiting_for_next = False
@@ -390,6 +471,16 @@ class StoryTypingEffect:
                 self.finished = True
         else:
             # Skip to end of current line
+            # Stop any voice for the current line when user forces skip
+            try:
+                if self.current_line < len(self.voice_keys):
+                    k = self.voice_keys[self.current_line]
+                    if k in voice_sounds:
+                        voice_sounds[k].stop()
+                elif self.voice_key and self.voice_key in voice_sounds:
+                    voice_sounds[self.voice_key].stop()
+            except Exception:
+                pass
             self.current_char = len(self.lines[self.current_line])
             self.waiting_for_next = True
             
@@ -483,9 +574,12 @@ def open_options_cb():
     set_scene_with_fade("options")
 
 def open_marketplace_cb():
+    subprocess.run([sys.executable, "marketplace.py"])
     set_scene_with_fade("marketplace")
 
+
 def open_level2_cb():
+    subprocess.run([sys.executable, "level_2.py"])
     set_scene_with_fade("level2")
 
 def exit_cb():
@@ -518,7 +612,9 @@ level2_buttons = [
 current_scene = "menu"
 scene_fade = {"active": False, "alpha": 0, "dir": 0, "target": None}
 story_typing = StoryTypingEffect(STORY_LINES, story_font, voice_key="story_intro", backgrounds=story_backgrounds)
-wm_dialogue = StoryTypingEffect(WM_DIALOGUE, dialogue_font, LORE_TEXT_COLOR, voice_key="wm_greeting")
+# Provide per-line greeting voice keys for WM dialogue (one per WM_DIALOGUE line)
+wm_greeting_keys = ["greeting_1", "greeting_2", "greeting_3", "greeting_4", "greeting_5"]
+wm_dialogue = StoryTypingEffect(WM_DIALOGUE, dialogue_font, LORE_TEXT_COLOR, voice_keys=wm_greeting_keys)
 name_input = NameInput()
 
 # -------------------------
@@ -843,12 +939,22 @@ def main_loop():
                 scene_fade["alpha"] = min(255, scene_fade["alpha"] + 8)
                 if scene_fade["alpha"] >= 255:
                     # switch scene now
+                    # stop any playing voice before switching scenes
+                    try:
+                        stop_all_voice()
+                    except Exception:
+                        pass
                     current_scene = scene_fade.get("target", current_scene)
                     # Reset story typing if entering story scene
                     if current_scene == "story_intro":
-                        story_typing = StoryTypingEffect(STORY_LINES, story_font, voice_key="story_intro", backgrounds=story_backgrounds)
+                        # Provide per-line voice keys for the first five intro scenes
+                        intro_voice_keys = ["intro_1", "intro_2", "intro_3", "intro_4", "intro_5"]
+                        # If there are fewer lines than voice keys, it's fine — constructor handles it
+                        story_typing = StoryTypingEffect(STORY_LINES, story_font, voice_keys=intro_voice_keys, backgrounds=story_backgrounds)
                     elif current_scene == "wm_dialogue":
-                        wm_dialogue = StoryTypingEffect(WM_DIALOGUE, dialogue_font, LORE_TEXT_COLOR, voice_key="wm_greeting")
+                        # Recreate WM dialogue with per-line greeting voices
+                        wm_greeting_keys = ["greeting_1", "greeting_2", "greeting_3", "greeting_4", "greeting_5"]
+                        wm_dialogue = StoryTypingEffect(WM_DIALOGUE, dialogue_font, LORE_TEXT_COLOR, voice_keys=wm_greeting_keys)
                         name_input = NameInput()
                     scene_fade["dir"] = -1
             elif scene_fade["dir"] == -1:

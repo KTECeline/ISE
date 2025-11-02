@@ -1,5 +1,6 @@
 import pygame
 import sys
+import os
 import random
 import math
 import json
@@ -105,6 +106,22 @@ score_multiplier_active = 1
 # aura active flag handled via timer
 # cluster cap spawns extra goals immediately when used; timer kept for visual UI
 
+# Transport sequence state: when all goals are completed we teleport the player
+# to a start position then smoothly move them up a tunnel (Y descends) over
+# TRANSPORT_DURATION_MS milliseconds. While transporting, input & shooting are
+# disabled and a small "Transporting..." message is shown.
+transporting = False
+transport_start_ticks = 0
+TRANSPORT_DURATION_MS = int(3 * 1000)
+TRANSPORT_START_POS = (5200.0, 4400.0)
+TRANSPORT_END_POS = (5200.0, 860.0)
+# Level flow states
+level_cleared = False
+level_cleared_start = 0
+LEVEL_CLEARED_DISPLAY_MS = 1500
+# After transport ends player can explore
+post_transport = False
+
 # Load persisted inventory
 inventory = load_inventory()
 
@@ -148,6 +165,49 @@ try:
 except Exception:
     scored_sound = None
 
+# Sound played when chest is first opened
+drop_sound = None
+try:
+    drop_sound = pygame.mixer.Sound('assets/sounds/drop.mp3')
+except Exception:
+    drop_sound = None
+
+# Tunnel transport sound: try several common extensions and fall back to the
+# music channel if needed. Support both pygame.mixer.Sound and pygame.mixer.music
+# so we can handle formats the Sound loader doesn't support.
+tunnel_sound = None
+tunnel_is_music = False
+def _load_tunnel_sound():
+    global tunnel_sound, tunnel_is_music
+    candidates = [
+        'assets/sounds/tunnel.mp3',
+        'assets/sounds/tunnel.ogg',
+        'assets/sounds/tunnel.wav',
+        'assets/sounds/tunnel1.mp3',
+    ]
+    for path in candidates:
+        if not os.path.exists(path):
+            continue
+        # First try to load as a Sound (small files)
+        try:
+            s = pygame.mixer.Sound(path)
+            tunnel_sound = s
+            tunnel_is_music = False
+            return
+        except Exception:
+            # If Sound can't load, try loading into the music channel
+            try:
+                pygame.mixer.music.load(path)
+                tunnel_sound = path
+                tunnel_is_music = True
+                return
+            except Exception:
+                # Not loadable; try next candidate
+                continue
+    # If nothing worked, keep tunnel_sound = None
+
+_load_tunnel_sound()
+
 # World dimensions from map
 WORLD_WIDTH = map_image.get_width()
 WORLD_HEIGHT = map_image.get_height()
@@ -173,6 +233,33 @@ for key, info in POWERUP_INFO.items():
 # Player setup in WORLD coordinates (start near ball for convenience)
 player_pos = [730.0, 8230.0]  # Near ball start
 player_radius = 20  # Simple circle for testing
+# Lock flag to prevent player movement after level completion/transport
+player_locked = False
+
+# Chest setup (placed in post-transport area)
+CHEST_POS = (5800.0, 895.0)
+CHEST_RADIUS = 48
+try:
+    chest_closed_img = pygame.image.load('assets/images/chest_closed.png').convert_alpha()
+except Exception:
+    chest_closed_img = pygame.Surface((64, 48), pygame.SRCALPHA)
+    pygame.draw.rect(chest_closed_img, (100,60,20), chest_closed_img.get_rect())
+try:
+    chest_open_img = pygame.image.load('assets/images/chest_open.png').convert_alpha()
+except Exception:
+    chest_open_img = pygame.Surface((64, 48), pygame.SRCALPHA)
+    pygame.draw.rect(chest_open_img, (200,180,80), chest_open_img.get_rect())
+chest_opened = False
+# Track previous chest state so we only play the open sound once on transition
+prev_chest_opened = False
+
+# Piles to decorate the post-transport area
+PILE_POSITIONS = [(5780.0, 905.0), (5840.0, 905.0)]
+try:
+    pile_img = pygame.image.load('assets/images/pile1.png').convert_alpha()
+except Exception:
+    pile_img = pygame.Surface((48, 32), pygame.SRCALPHA)
+    pygame.draw.ellipse(pile_img, (120, 90, 60), pile_img.get_rect())
 
 # Camera setup (follows player, keeps player centered)
 cam_x = player_pos[0] - SCREEN_WIDTH // 2
@@ -328,6 +415,14 @@ def update_camera():
         cam_y += sy
         screen_shake_timer -= 1
 
+
+def ease_in_out_cubic(t: float) -> float:
+    """Smooth cubic ease-in/out. t in [0,1]."""
+    if t < 0.5:
+        return 4 * t * t * t
+    else:
+        return 1 - pow(-2 * t + 2, 3) / 2
+
 # The minimap drawing is handled by level2.ui.draw_minimap which is imported
 # at module top. The original in-file implementation was removed to avoid
 # shadowing the cleaner, parameterized helper in `level2.ui`.
@@ -470,7 +565,7 @@ while running:
                         # immediate feedback print
                         print(f"Used {k}; remaining: {inventory.get(k,0)}")
         if event.type == pygame.KEYDOWN:
-            if event.key == pygame.K_SPACE and mushroom_ball.stopped and not level_complete:  # Shoot if stopped
+            if event.key == pygame.K_SPACE and mushroom_ball.stopped and not player_locked:  # Shoot if stopped
                 # Get mouse world pos
                 mouse_screen = pygame.mouse.get_pos()
                 mouse_world_pos[0] = mouse_screen[0] + cam_x
@@ -480,6 +575,15 @@ while running:
                 if not mushroom_ball.hit_this_shot:
                     streak = 0
                 mushroom_ball.reset(player_pos)
+            if event.key == pygame.K_e:
+                # If chest is opened and player presses E, exit back to main menu
+                if post_transport and chest_opened:
+                    try:
+                        save_inventory(inventory)
+                    except Exception:
+                        pass
+                    pygame.quit()
+                    sys.exit()
         # Optional: Zoom with mouse wheel (basic)
         if event.type == pygame.MOUSEWHEEL:
             pass  # Expand if needed
@@ -492,51 +596,126 @@ while running:
         flash_surf.set_alpha(flash_alpha)
         screen.blit(flash_surf, (0, 0))
     else:
-        # Handle input (arrow keys or WASD for player)
-        keys = pygame.key.get_pressed()
-        # Apply runtime player movement multiplier (allows velocity powerup to speed player)
-        cur_speed = PLAYER_SPEED * (player_speed_multiplier if player_speed_multiplier else 1.0)
-        new_x, new_y = player_pos[0], player_pos[1]
-        if keys[pygame.K_LEFT] or keys[pygame.K_a]:
-            new_x -= cur_speed
-        if keys[pygame.K_RIGHT] or keys[pygame.K_d]:
-            new_x += cur_speed
-        if keys[pygame.K_UP] or keys[pygame.K_w]:
-            new_y -= cur_speed
-        if keys[pygame.K_DOWN] or keys[pygame.K_s]:
-            new_y += cur_speed
+        # If we're transporting the player, animate the tunnel movement and
+        # skip standard input / ball updates. Otherwise handle input normally.
+        # If level was just cleared, show a short "LEVEL CLEARED" message
+        # then teleport the player to the transport start and begin the tunnel.
+        if level_cleared and (not transporting) and (not post_transport):
+            now = pygame.time.get_ticks()
+            if now - level_cleared_start >= LEVEL_CLEARED_DISPLAY_MS:
+                # teleport player to transport start and begin transport
+                try:
+                    player_pos[0] = TRANSPORT_START_POS[0]
+                    player_pos[1] = TRANSPORT_START_POS[1]
+                    transporting = True
+                    transport_start_ticks = pygame.time.get_ticks()
+                    player_locked = True
+                    # play tunnel sound (when available)
+                    try:
+                        if tunnel_sound:
+                            if tunnel_is_music:
+                                pygame.mixer.music.play(-1)
+                            else:
+                                tunnel_sound.play(-1)
+                    except Exception:
+                        pass
+                except Exception:
+                    # if teleport fails, just mark as post_transport so player can move
+                    post_transport = True
+                    player_locked = False
 
-        # Clamp proposed move to world bounds
-        new_x = max(player_radius, min(new_x, WORLD_WIDTH - player_radius))
-        new_y = max(player_radius, min(new_y, WORLD_HEIGHT - player_radius))
-
-        # Test collision at new world position (silent)
-        if check_collision(new_x, new_y, player_radius):
-            pass  # Silent wall hit
+        if transporting:
+            now = pygame.time.get_ticks()
+            elapsed = now - transport_start_ticks
+            t_raw = min(1.0, elapsed / float(TRANSPORT_DURATION_MS))
+            t = ease_in_out_cubic(t_raw)
+            # Lock X to transport start X and ease Y from start -> end
+            player_pos[0] = TRANSPORT_START_POS[0]
+            player_pos[1] = TRANSPORT_START_POS[1] + (TRANSPORT_END_POS[1] - TRANSPORT_START_POS[1]) * t
+            # Once transport finishes, mark level complete so the win screen shows
+            if t_raw >= 1.0:
+                transporting = False
+                post_transport = True
+                player_locked = False
+                # stop tunnel sound gracefully if playing
+                try:
+                    if tunnel_sound:
+                        if tunnel_is_music:
+                            try:
+                                pygame.mixer.music.fadeout(400)
+                            except Exception:
+                                try:
+                                    pygame.mixer.music.stop()
+                                except Exception:
+                                    pass
+                        else:
+                            try:
+                                tunnel_sound.fadeout(400)
+                            except Exception:
+                                try:
+                                    tunnel_sound.stop()
+                                except Exception:
+                                    pass
+                except Exception:
+                    pass
+            # Still allow particle updates and timers below; skip movement/ball logic
+            keys = pygame.key.get_pressed()  # dummy read to keep input state consistent
         else:
-            player_pos[0] = new_x
-            player_pos[1] = new_y
+            # Handle input (arrow keys or WASD for player)
+            keys = pygame.key.get_pressed()
+        # If not transporting and not locked, apply runtime movement, ball updates and goal checks.
+        if (not transporting) and (not player_locked):
+            # Apply runtime player movement multiplier (allows velocity powerup to speed player)
+            cur_speed = PLAYER_SPEED * (player_speed_multiplier if player_speed_multiplier else 1.0)
+            new_x, new_y = player_pos[0], player_pos[1]
+            if keys[pygame.K_LEFT] or keys[pygame.K_a]:
+                new_x -= cur_speed
+            if keys[pygame.K_RIGHT] or keys[pygame.K_d]:
+                new_x += cur_speed
+            if keys[pygame.K_UP] or keys[pygame.K_w]:
+                new_y -= cur_speed
+            if keys[pygame.K_DOWN] or keys[pygame.K_s]:
+                new_y += cur_speed
 
-        # Update ball
-        mushroom_ball.update()
-        hit_during_shot = False
-        if mushroom_ball.active and not level_complete:
-            if check_goal_hit(mushroom_ball.pos, mushroom_ball.radius):
-                hit_during_shot = True
-                if len(goals) == 0:
-                    level_complete = True
-            if mushroom_ball.stopped:
-                if not mushroom_ball.hit_this_shot:
-                    streak = 0
-                mushroom_ball.reset(player_pos)  # Auto-reset after stop
+            # Clamp proposed move to world bounds
+            new_x = max(player_radius, min(new_x, WORLD_WIDTH - player_radius))
+            new_y = max(player_radius, min(new_y, WORLD_HEIGHT - player_radius))
 
-        # Update particles
+            # Test collision at new world position (silent)
+            if not check_collision(new_x, new_y, player_radius):
+                player_pos[0] = new_x
+                player_pos[1] = new_y
+
+            # Update ball
+            mushroom_ball.update()
+            hit_during_shot = False
+            if mushroom_ball.active and not level_complete:
+                if check_goal_hit(mushroom_ball.pos, mushroom_ball.radius):
+                    hit_during_shot = True
+                    # If that was the last goal, enter the cleared state and show the
+                    # 'Level Cleared' message briefly before teleporting to the
+                    # transport start area.
+                    if len(goals) == 0 and not level_cleared:
+                        level_cleared = True
+                        level_cleared_start = pygame.time.get_ticks()
+                        # deactivate the ball so it doesn't continue moving
+                        try:
+                            mushroom_ball.active = False
+                            mushroom_ball.stopped = True
+                        except Exception:
+                            pass
+                if mushroom_ball.stopped:
+                    if not mushroom_ball.hit_this_shot:
+                        streak = 0
+                    mushroom_ball.reset(player_pos)  # Auto-reset after stop
+
+        # Update particles (always run so effects continue during transport)
         particles.update()
 
-        # Update pop-ups
+        # Update pop-ups (always run)
         popups = [p for p in popups if p.update()]
 
-        # Update powerup timers and apply runtime flags
+        # Update powerup timers and apply runtime flags (always run)
         # Decrement timers
         for k in list(powerup_timers.keys()):
             if powerup_timers[k] > 0:
@@ -696,6 +875,60 @@ while running:
         except Exception:
             pass
 
+    # Draw 'Level Cleared' message right after clearing goals and before teleport
+    if level_cleared and (not transporting) and (not post_transport):
+        now = pygame.time.get_ticks()
+        if now - level_cleared_start < LEVEL_CLEARED_DISPLAY_MS:
+            try:
+                msg = big_font.render("LEVEL CLEARED", True, (255, 215, 120))
+                r = msg.get_rect(center=(SCREEN_WIDTH//2, SCREEN_HEIGHT//2 - 120))
+                screen.blit(msg, r)
+            except Exception:
+                pass
+
+    # If post-transport state active, draw chest and handle proximity
+    if post_transport:
+        try:
+            cx, cy = CHEST_POS
+            screen_x = int(cx - cam_x - chest_closed_img.get_width()//2)
+            screen_y = int(cy - cam_y - chest_closed_img.get_height()//2)
+            # Draw decorative piles near the chest (behind the chest)
+            try:
+                for px, py in PILE_POSITIONS:
+                    p_screen_x = int(px - cam_x - (pile_img.get_width() // 2))
+                    p_screen_y = int(py - cam_y - (pile_img.get_height() // 2))
+                    screen.blit(pile_img, (p_screen_x, p_screen_y))
+            except Exception:
+                pass
+            
+            # collision / proximity check
+            dist_sq = (player_pos[0] - cx) ** 2 + (player_pos[1] - cy) ** 2
+            # Determine new opened state and play drop sound only on transition
+            new_opened = dist_sq <= CHEST_RADIUS ** 2
+            if new_opened:
+                # Play drop/open sound the moment chest transitions from closed -> open
+                if not prev_chest_opened:
+                    try:
+                        if drop_sound:
+                            drop_sound.play()
+                    except Exception:
+                        pass
+                chest_opened = True
+                screen.blit(chest_open_img, (screen_x, screen_y))
+                # show prompt
+                try:
+                    prompt = font.render("Press E to exit", True, (240, 240, 240))
+                    pr = prompt.get_rect(center=(SCREEN_WIDTH//2, SCREEN_HEIGHT - 60))
+                    screen.blit(prompt, pr)
+                except Exception:
+                    pass
+            else:
+                chest_opened = False
+                screen.blit(chest_closed_img, (screen_x, screen_y))
+            prev_chest_opened = new_opened
+        except Exception:
+            pass
+
     # Draw particles (world -> screen offset)
     for p in list(particles):
         try:
@@ -744,16 +977,32 @@ while running:
     # Draw player (always centered since cam follows)
     pygame.draw.circle(screen, (0, 0, 255), (SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2), player_radius)
 
-    # Draw mushroom ball
-    mushroom_ball.draw(screen, cam_x, cam_y)
+    # Draw mushroom ball only when not transporting
+    if not transporting:
+        mushroom_ball.draw(screen, cam_x, cam_y)
+    else:
+        # Dim the view slightly and show a centered transporting label
+        try:
+            overlay = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
+            overlay.fill((0, 0, 0, 100))
+            screen.blit(overlay, (0, 0))
+            t_txt = big_font.render("Transporting...", True, (255, 255, 255))
+            t_rect = t_txt.get_rect(center=(SCREEN_WIDTH//2, SCREEN_HEIGHT//2 - 40))
+            # faint outline for readability
+            outline = pygame.Surface((t_rect.width+8, t_rect.height+8), pygame.SRCALPHA)
+            outline.fill((0,0,0,120))
+            screen.blit(outline, (t_rect.x-4, t_rect.y-4))
+            screen.blit(t_txt, t_rect)
+        except Exception:
+            pass
 
     # Draw score pop-ups
     for popup in popups:
         # ScorePopup.draw now requires a font argument
         popup.draw(screen, cam_x, cam_y, font)
 
-    # Aim line (from player to mouse, if not shooting)
-    if mushroom_ball.stopped and not level_complete:
+    # Aim line (from player to mouse, if not shooting and not transporting or locked)
+    if (not transporting) and (not player_locked) and mushroom_ball.stopped and not level_complete:
         mouse_screen = pygame.mouse.get_pos()
         mouse_world_pos[0] = mouse_screen[0] + cam_x
         mouse_world_pos[1] = mouse_screen[1] + cam_y
