@@ -14,6 +14,11 @@ from level2.powerups import (load_inventory, save_inventory, load_powerup_images
                            draw_powerup_ui, POWERUP_INFO)
 from level2.level_state import reset_level, handle_transport_sequence, update_transport
 import charactermove as char_move
+# Guide module (kept optional so importing level_2 doesn't fail if file missing)
+try:
+    from level2.guide import draw_guide_overlay
+except Exception:
+    draw_guide_overlay = None
 
 # Initialize Pygame
 pygame.init()
@@ -199,6 +204,17 @@ try:
 except Exception:
     drop_sound = None
 
+# Game over SFX (re-using the level 1 gameover wav if present)
+gameover_sound = None
+try:
+    if os.path.exists('assets/sounds/level_1_gameover.wav'):
+        try:
+            gameover_sound = pygame.mixer.Sound('assets/sounds/level_1_gameover.wav')
+        except Exception:
+            gameover_sound = None
+except Exception:
+    gameover_sound = None
+
 # Tunnel transport sound
 tunnel_sound = None
 tunnel_is_music = False
@@ -273,6 +289,8 @@ player_health = player_max_health
 # Frames of temporary invulnerability after taking a bubble hit
 HIT_COOLDOWN_FRAMES = int(0.8 * FPS)
 player_hit_cooldown = 0
+# Guide toggle state
+show_guide = False
 
 # Chest setup (placed in post-transport area)
 CHEST_POS = (5800.0, 895.0)
@@ -627,6 +645,12 @@ while running:
                         pass
                     pygame.quit()
                     sys.exit()
+            # Toggle the short guide overlay with Y
+            if event.key == pygame.K_y:
+                try:
+                    show_guide = not show_guide
+                except Exception:
+                    show_guide = False
 
         # Optional: Zoom with mouse wheel (basic)
         if event.type == pygame.MOUSEWHEEL:
@@ -768,6 +792,12 @@ while running:
             try:
                 mushroom_ball.active = False
                 mushroom_ball.stopped = True
+            except Exception:
+                pass
+            # Play game over sound when the player dies (if available)
+            try:
+                if 'gameover_sound' in globals() and gameover_sound:
+                    gameover_sound.play()
             except Exception:
                 pass
 
@@ -1144,8 +1174,16 @@ while running:
                  WORLD_WIDTH, WORLD_HEIGHT, MINIMAP_SIZE, MINIMAP_ZOOM, goals)
 
     # Info/UI with score
-    info = font.render(f"Pos: ({int(player_pos[0])}, {int(player_pos[1])}) | Score: {score} | Goals left: {len(goals)} | SPACE to shoot! R to reset", True, (255, 255, 255))
+    info = font.render(f"Pos: ({int(player_pos[0])}, {int(player_pos[1])}) | Score: {score} | Goals left: {len(goals)} | SPACE to shoot! R to reset ! Press Y for guide", True, (255, 255, 255))
     screen.blit(info, (10, 10))
+    
+
+    # If the guide overlay is active, draw it on top
+    try:
+        if show_guide and draw_guide_overlay is not None:
+            draw_guide_overlay(screen, font, big_font, SCREEN_WIDTH, SCREEN_HEIGHT)
+    except Exception:
+        pass
 
     # Draw player health bar
     try:
