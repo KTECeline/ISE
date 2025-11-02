@@ -1,19 +1,14 @@
 # Launcher: run menu, then level_1 -> marketplace -> level_2 following exit codes.
 import subprocess
 import sys
-import os
 import time
 
 PY = sys.executable
-ROOT = os.path.dirname(os.path.abspath(__file__))
 
 def run_blocking(script):
-    path = os.path.join(ROOT, script)
-    if not os.path.exists(path):
-        print(f"[WARN] {script} not found.")
-        return None
+    # Use relative script names only (expect to be launched from project root)
     try:
-        res = subprocess.run([PY, path])
+        res = subprocess.run([PY, script])
         return getattr(res, "returncode", 0)
     except Exception as e:
         print(f"[ERROR] running {script}: {e}")
@@ -24,11 +19,9 @@ def main():
     rc = run_blocking("main_menu.py")
     if rc is None:
         return
-    # If main_menu signalled "start game" with code 3, continue; otherwise just exit.
     if rc == 3:
-        # Quit briefly to ensure resources freed on some platforms
         time.sleep(0.1)
-        # 2) Run level_1
+        # 2) Run level_1 (relative path)
         rc1 = run_blocking("level_1.py")
         # After Level 1 completes, run marketplace
         rc_market = run_blocking("marketplace.py")

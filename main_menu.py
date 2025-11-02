@@ -80,7 +80,7 @@ STORY_LINES = [
     "In the ancient fungal realm of Echofungus, a vast underground world woven from mycelial threads and spore-veiled caverns, life pulses through symbiotic cycles of decay and rebirth.",
     "But a cataclysmic Blightstorm—a spore plague—fractured the realm, starving the guardian monsters that hold back the encroaching void.",
     "You are a Surface Echo, a rare wanderer from the barren above-world, drawn by Hyphara's call to restore balance.",
-    "Your journey involves collecting and feeding sacred mushrooms to these monstrous guardians, awakening their strength and mending the mycelial web.", 
+    "Your journey involves collecting and feeding sacred mushrooms to these monstrous guardians, awakening their strength and mending the mycelial web.",
     "Failure means the Blightstorm consumes all; success earns Hyphara's gratitude and ascension to the Sporelit Heavens.",
     "Your journey begins now."
 ]
@@ -570,8 +570,8 @@ def start_level_1():
         except Exception:
             pass
 
-        script = os.path.abspath("level_1.py")
-        os.execv(sys.executable, [sys.executable, script])
+        # Use a relative path so no absolute/local paths are embedded.
+        os.execv(sys.executable, [sys.executable, "level_1.py"])
     except Exception as e:
         # Exec failed — fallback to launching as subprocess then exit.
         print("[WARN] execv failed, falling back to subprocess.run:", e)
@@ -606,8 +606,8 @@ def open_marketplace_cb():
         pass
 
     try:
-        script = os.path.abspath("marketplace.py")
-        os.execv(sys.executable, [sys.executable, script])
+        # Exec with a relative script path (no absolute/local paths)
+        os.execv(sys.executable, [sys.executable, "marketplace.py"])
     except Exception as e:
         # Exec failed; fallback to launching marketplace then exiting.
         print("[WARN] execv failed, falling back to subprocess.run:", e)
@@ -628,8 +628,8 @@ def open_level2_cb():
         pass
 
     try:
-        script = os.path.abspath("level_2.py")
-        os.execv(sys.executable, [sys.executable, script])
+        # Use relative path only
+        os.execv(sys.executable, [sys.executable, "level_2.py"])
     except Exception as e:
         # Exec failed; fallback to launching level_2 then exiting.
         print("[WARN] execv failed, falling back to subprocess.run:", e)
@@ -931,7 +931,7 @@ def main_loop():
                         # Name input is active, don't advance dialogue on click
                         pass
                     elif wm_dialogue.is_complete():
-                        # Dialogue finished, start the game
+                        # Dialogue finished — close menu and start level_1 immediately
                         start_level_1()
                     else:
                         # Skip to next line or complete current line
@@ -961,7 +961,7 @@ def main_loop():
                             game_data["player_name"] = name_input.text
                             save_game_data(game_data)
                     elif wm_dialogue.is_complete():
-                        # Dialogue finished, start the game
+                        # Dialogue finished — close menu and start level_1 immediately
                         start_level_1()
                     else:
                         # Skip to next line or complete current line
@@ -988,6 +988,12 @@ def main_loop():
 
         mouse_pos = pygame.mouse.get_pos()
 
+        # Auto-start Level 1 if WM dialogue finished and name input is not active.
+        # This ensures the menu closes and level_1 launches immediately without
+        # waiting for an extra key/mouse press.
+        if current_scene == "wm_dialogue" and not name_input.active and wm_dialogue.is_complete():
+            start_level_1()
+            
         # update spores
         for s in spores:
             s.update(dt)
