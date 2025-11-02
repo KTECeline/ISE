@@ -608,13 +608,50 @@ def open_options_cb():
     set_scene_with_fade("options")
 
 def open_marketplace_cb():
-    subprocess.run([sys.executable, "marketplace.py"])
-    set_scene_with_fade("marketplace")
+    # Save and fully close the menu, then replace the current process with
+    # the marketplace Python process. Using os.execv ensures the menu process
+    # is replaced (no background menu left running). Falls back to subprocess
+    # if execv fails.
+    save_game_data(game_data)
+    try:
+        pygame.quit()
+    except Exception:
+        pass
 
+    try:
+        script = os.path.abspath("marketplace.py")
+        os.execv(sys.executable, [sys.executable, script])
+    except Exception as e:
+        # Exec failed; fallback to launching marketplace then exiting.
+        print("[WARN] execv failed, falling back to subprocess.run:", e)
+        try:
+            subprocess.run([sys.executable, "marketplace.py"])
+        except Exception as e2:
+            print("[ERROR] Failed to launch marketplace:", e2)
+        finally:
+            sys.exit(0)
 
 def open_level2_cb():
-    subprocess.run([sys.executable, "level_2.py"])
-    set_scene_with_fade("level2")
+    # Save and fully close the menu, then replace the current process with
+    # the Level 2 Python process so the menu is not left running in background.
+    save_game_data(game_data)
+    try:
+        pygame.quit()
+    except Exception:
+        pass
+
+    try:
+        script = os.path.abspath("level_2.py")
+        os.execv(sys.executable, [sys.executable, script])
+    except Exception as e:
+        # Exec failed; fallback to launching level_2 then exiting.
+        print("[WARN] execv failed, falling back to subprocess.run:", e)
+        try:
+            subprocess.run([sys.executable, "level_2.py"])
+        except Exception as e2:
+            print("[ERROR] Failed to launch level_2.py:", e2)
+        finally:
+            sys.exit(0)
 
 def exit_cb():
     save_game_data(game_data)
@@ -755,7 +792,8 @@ def render_marketplace(dt, mouse_pos):
     screen.blit(background, (0,0))
     for s in spores: s.draw(screen)
     draw_centered_title(screen, "MARKETPLACE", title_font, (210,240,210), DARK_MOSS_OUTLINE, SCREEN_WIDTH//2, 140)
-    info = small_font.render("Marketplace coming soon. Use Back to return.", True, STATS_COLOR)
+    # Marketplace now launched via callback; keep simple UI while subprocess runs/returns
+    info = small_font.render("Launching Marketplace... (will return when closed)", True, STATS_COLOR)
     screen.blit(info, info.get_rect(center=(SCREEN_WIDTH//2, SCREEN_HEIGHT//2)))
     for b in market_buttons: b.draw(screen)
     footer = small_font.render("Developed by G23", True, WHITE)

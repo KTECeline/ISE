@@ -1,6 +1,6 @@
 {
     "score": 350,
-    "lives": 3,
+    "lives": 1,
     "mushrooms": 3,
     "current_level": 1,
     "inventory": {},
@@ -8,5 +8,5 @@
         1,
         2
     ],
-    "player_name": "d"
+    "player_name": "f"
 }

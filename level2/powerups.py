@@ -88,7 +88,7 @@ def _activate_cluster_cap(powerup_timers, temp_goal_timers, goals, goal_sprites,
             
             if gy > FORBIDDEN_Y_MAX and not check_collision_fn(gx, gy, GOAL_RADIUS):
                 goals.append([gx, gy])
-                from .goal import GoalSprite
+                from .goals import GoalSprite
                 gs = GoalSprite(gx, gy, index=len(goals))
                 goal_sprites.add(gs)
                 goal_sprite_map[(int(gx), int(gy))] = gs

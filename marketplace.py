@@ -3,6 +3,8 @@ import sys
 import json
 import random
 import math
+import os
+import subprocess
 from PIL import Image, ImageFilter  # pip install pillow
 from charactermove import load_assets, Player
 
@@ -296,6 +298,7 @@ class Marketplace:
                         else:
                             print("Not enough points!")
                 if self.start_button.collidepoint(mouse_pos):
+                    # Persist inventory then replace this process with level_2.py
                     save_inventory(self.inventory)
                     try:
                         if click_sfx:
@@ -303,7 +306,23 @@ class Marketplace:
                     except Exception:
                         pass
                     print("Starting Level 2 with:", self.inventory)
-                    return ('level2', self.inventory)
+                    # Close pygame and exec into level_2.py so no marketplace process remains.
+                    try:
+                        pygame.quit()
+                    except Exception:
+                        pass
+                    try:
+                        script = os.path.abspath("level_2.py")
+                        os.execv(sys.executable, [sys.executable, script])
+                    except Exception as e:
+                        # Fallback: run as subprocess then exit
+                        print("[WARN] execv failed, falling back to subprocess.run:", e)
+                        try:
+                            subprocess.run([sys.executable, "level_2.py"])
+                        except Exception as e2:
+                            print("[ERROR] Failed to launch level_2.py:", e2)
+                        finally:
+                            sys.exit(0)
 
     def transition(self, new_state):
         self.state = new_state

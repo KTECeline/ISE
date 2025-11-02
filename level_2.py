@@ -242,6 +242,30 @@ def _load_tunnel_sound():
                 continue
 _load_tunnel_sound()
 
+# Background music for Level 2 (start when this module runs)
+level_music_path = 'assets/music/gloomy.mp3'
+level_music = None
+level_music_playing = False
+try:
+    if os.path.exists(level_music_path):
+        try:
+            # Stream via the music channel (preferred for large files)
+            pygame.mixer.music.load(level_music_path)
+            pygame.mixer.music.set_volume(0.6)
+            pygame.mixer.music.play(-1, fade_ms=800)  # loop indefinitely
+            level_music_playing = True
+        except Exception:
+            # fallback: try as a Sound and loop
+            try:
+                level_music = pygame.mixer.Sound(level_music_path)
+                level_music.set_volume(0.6)
+                level_music.play(loops=-1)
+                level_music_playing = True
+            except Exception:
+                level_music = None
+except Exception:
+    pass
+
 # World dimensions from map
 WORLD_WIDTH = map_image.get_width()
 WORLD_HEIGHT = map_image.get_height()
@@ -291,6 +315,10 @@ HIT_COOLDOWN_FRAMES = int(0.8 * FPS)
 player_hit_cooldown = 0
 # Guide toggle state
 show_guide = False
+
+# --- NEW: allow passing collision for a short time after being hit ---
+IGNORE_COLLISION_ON_HIT_FRAMES = int(0.6 * FPS)  # how long you can pass roads after hit
+player_ignore_collision_frames = 0
 
 # Chest setup (placed in post-transport area)
 CHEST_POS = (5800.0, 895.0)
@@ -388,29 +416,37 @@ class GoalBubble(pygame.sprite.Sprite):
             dx = self.world_x - player_pos[0]
             dy = self.world_y - center_y
             if dx * dx + dy * dy <= (self.radius + char_radius) ** 2:
-                # small knockback
-                dist = math.hypot(dx, dy) or 1.0
-                push = 22.0
-                player_pos[0] += (dx / dist) * push
-                player_pos[1] += (dy / dist) * push
-                # damage the player (with brief invuln cooldown so one burst doesn't insta-kill)
                 try:
-                    global player_health, player_hit_cooldown
-                    if player_hit_cooldown <= 0:
-                        damage = 5
-                        player_health = max(0, player_health - damage)
-                        player_hit_cooldown = HIT_COOLDOWN_FRAMES
-                        # show a small negative popup to indicate damage (reuse ScorePopup)
+                    global player_health, player_hit_cooldown, player_ignore_collision_frames
+                    # Treat golden_gleam as an absolute shield: no HP loss and no knockback.
+                    golden_shield = powerup_timers.get('golden_gleam', 0) > 0
+                    if golden_shield:
+                        # Visual feedback only (no damage, no knockback, no cooldown)
                         try:
-                            popups.append(ScorePopup(player_pos[0], player_pos[1], -damage))
+                            popups.append(ScorePopup(player_pos[0], player_pos[1], 0))
                         except Exception:
                             pass
+                    else:
+                        # small knockback and damage as before
+                        dist = math.hypot(dx, dy) or 1.0
+                        push = 22.0
+                        player_pos[0] += (dx / dist) * push
+                        player_pos[1] += (dy / dist) * push
+                        if player_hit_cooldown <= 0:
+                            damage = 5
+                            player_health = max(0, player_health - damage)
+                            player_hit_cooldown = HIT_COOLDOWN_FRAMES
+                            # allow passing collision briefly after being hit
+                            player_ignore_collision_frames = IGNORE_COLLISION_ON_HIT_FRAMES
+                            try:
+                                popups.append(ScorePopup(player_pos[0], player_pos[1], -damage))
+                            except Exception:
+                                pass
                 except Exception:
                     pass
-                # spawn pop particles and remove the bubble
+                # spawn pop particles and remove the bubble (always)
                 for _ in range(6):
                     particles.add(SporeParticle(self.world_x, self.world_y))
-                # play bubble-pop sound if available
                 try:
                     if 'bubble_pop' in globals() and bubble_pop:
                         bubble_pop.play()
@@ -521,7 +557,7 @@ def aura_collect():
         pts = BASE_SCORE if streak == 0 else int(BASE_SCORE * COMBO_MULTIPLIER)
     else:
         pts = int(BASE_SCORE * n * COMBO_MULTIPLIER)
-    # golden gleam doubles points if active
+    # golden gleam SHIELDS if active
     if powerup_timers.get('golden_gleam', 0) > 0:
         pts = int(pts * 2)
     score += pts
@@ -651,6 +687,11 @@ while running:
                 if not mushroom_ball.hit_this_shot:
                     streak = 0
                 mushroom_ball.reset(player_pos)
+            if event.key == pygame.K_y:  # Toggle guide overlay
+                try:
+                    show_guide = not show_guide
+                except Exception:
+                    pass
             if event.key == pygame.K_e:
                 # If chest is opened and player presses E, launch the ending scene
                 if post_transport and chest_opened:
@@ -659,6 +700,22 @@ while running:
                     except Exception:
                         pass
                     
+                    # Stop/fade out level music before launching ending scene
+                    try:
+                        if level_music_playing:
+                            try:
+                                pygame.mixer.music.fadeout(800)
+                            except Exception:
+                                try:
+                                    if level_music:
+                                        level_music.fadeout(800)
+                                    else:
+                                        pygame.mixer.music.stop()
+                                except Exception:
+                                    pass
+                    except Exception:
+                        pass
+
                     # Import and run the ending scene
                     try:
                         import end1
@@ -729,9 +786,16 @@ while running:
             new_y = max(player_radius, min(new_y, WORLD_HEIGHT - player_radius))
 
             # Test collision at new world position (silent)
-            if not check_collision_wrapper(new_x, new_y, player_radius):
-                player_pos[0] = new_x
-                player_pos[1] = new_y
+            # If golden gleam is active, allow completely free movement (skip collision checks).
+            # Also allow the brief hit-based ignore window to work as before.
+            if player_ignore_collision_frames > 0 or powerup_timers.get('golden_gleam', 0) > 0:
+                # still clamp to world bounds but skip collision check
+                player_pos[0] = max(player_radius, min(new_x, WORLD_WIDTH - player_radius))
+                player_pos[1] = max(player_radius, min(new_y, WORLD_HEIGHT - player_radius))
+            else:
+                if not check_collision_wrapper(new_x, new_y, player_radius):
+                    player_pos[0] = new_x
+                    player_pos[1] = new_y
 
             # Update ball
             mushroom_ball.update()
@@ -797,6 +861,10 @@ while running:
         # player's hit cooldown tick-down
         if player_hit_cooldown > 0:
             player_hit_cooldown -= 1
+
+        # NEW: decrement the temporary ignore-collision frames so it expires
+        if player_ignore_collision_frames > 0:
+            player_ignore_collision_frames -= 1
 
         # Decrement cluster overlay timer
         if cluster_overlay_timer > 0:
@@ -920,9 +988,9 @@ while running:
         y_overlay = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
         y_overlay.fill((255, 220, 100, max(20, min(180, alpha))))
         screen.blit(y_overlay, (0, 0))
-        # small 'DOUBLE' label top-center while active
+        # small 'SHIELD' label top-center while active
         try:
-            lbl = big_font.render("DOUBLE SCORE", True, (255, 240, 180))
+            lbl = big_font.render("SHIELD", True, (255, 240, 180))
             lbl_rect = lbl.get_rect(center=(SCREEN_WIDTH//2, 40))
             # draw faint dark outline
             outline = pygame.Surface((lbl_rect.width+8, lbl_rect.height+8), pygame.SRCALPHA)
@@ -1275,6 +1343,22 @@ while running:
 
     pygame.display.flip()
     clock.tick(FPS)
+
+# ensure level music is stopped/faded before quitting
+try:
+    if level_music_playing:
+        try:
+            pygame.mixer.music.fadeout(800)
+        except Exception:
+            try:
+                if level_music:
+                    level_music.fadeout(800)
+                else:
+                    pygame.mixer.music.stop()
+            except Exception:
+                pass
+except Exception:
+    pass
 
 pygame.quit()
 sys.exit()
