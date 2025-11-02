@@ -550,20 +550,54 @@ def start_game_cb():
     set_scene_with_fade("story_intro")
 
 def start_level_1():
-    if os.path.exists("level_1.py"):
+    """Run Level 1, then Marketplace, then Level 2 in sequence.
+
+    This function blocks while each subprocess runs. When Marketplace exits
+    with returncode 2 it means the player chose to start Level 2; in that
+    case we launch Level 2 and finally return to the menu when Level 2 exits.
+    """
+    if not os.path.exists("level_1.py"):
+        print("[INFO] level_1.py not found — returning to menu.")
+        set_scene_with_fade("menu")
+        return
+
+    try:
+        # Update game data before starting level
+        game_data["current_level"] = 1
+        save_game_data(game_data)
+
+        # Run Level 1 (blocking). When it exits, continue to Marketplace.
+        subprocess.run([sys.executable, "level_1.py"]) 
+
+        # After Level 1, run the Marketplace as a blocking subprocess and
+        # inspect its exit code to decide whether to start Level 2.
         try:
-            # Update game data before starting level
-            game_data["current_level"] = 1
-            save_game_data(game_data)
-            
-            subprocess.run([sys.executable, "level_1.py"])
-            # If we return from level_1, go back to main menu
-            set_scene_with_fade("menu")
+            res = subprocess.run([sys.executable, "marketplace.py"])  # blocking
         except Exception as e:
-            print("[WARN] launching level_1.py failed:", e)
+            print("[WARN] marketplace launch failed:", e)
             set_scene_with_fade("menu")
-    else:
-        print("[INFO] level_1.py not found — placeholder start.")
+            return
+
+        # Convention: marketplace exits with code 2 to signal "start level2".
+        if getattr(res, 'returncode', 0) == 2:
+            # Launch Level 2 and wait for it to finish, then return to menu
+            try:
+                subprocess.run([sys.executable, "level_2.py"])  # blocking
+                # After Level 2 finishes as part of the full flow, exit the menu
+                # application so we don't loop back into the menu endlessly.
+                save_game_data(game_data)
+                try:
+                    pygame.quit()
+                except Exception:
+                    pass
+                sys.exit(0)
+            except Exception as e:
+                print("[WARN] launching level_2.py failed:", e)
+
+        # Finally, return to the main menu scene
+        set_scene_with_fade("menu")
+    except Exception as e:
+        print("[WARN] launching level_1.py failed:", e)
         set_scene_with_fade("menu")
 
 def set_scene_with_fade(target):
