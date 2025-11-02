@@ -7,6 +7,7 @@ import json
 from level2.goal import walking_frames_right, hit_frames_right
 from level2.particles import SporeParticle, FireworkParticle
 from level2.ui import ScorePopup, draw_minimap
+import charactermove as char_move
 # Initialize Pygame
 pygame.init()
 # Initialize audio mixer (safe if system doesn't have audio — catch failures)
@@ -45,6 +46,11 @@ except Exception:
     bubble_pop = scored_sound = None
 # Create a dummy display mode first to allow image loading (fixes "No video mode" error)
 dummy_screen = pygame.display.set_mode((1, 1), pygame.NOFRAME)
+# Try loading character assets (safe if assets missing)
+try:
+    char_move.load_assets()
+except Exception:
+    pass
 # Constants
 SCREEN_WIDTH = 1024  # Fixed screen size for viewing
 SCREEN_HEIGHT = 768
@@ -273,6 +279,13 @@ for key, info in POWERUP_INFO.items():
 # Player setup in WORLD coordinates (start near ball for convenience)
 player_pos = [730.0, 8230.0]  # Near ball start
 player_radius = 20  # Simple circle for testing
+# Instantiate character sprite for on-screen player (rendered at screen center)
+try:
+    character_sprite = char_move.Player(pos=(SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2 + player_radius))
+    character_group = pygame.sprite.Group(character_sprite)
+except Exception:
+    character_sprite = None
+    character_group = pygame.sprite.Group()
 # Lock flag to prevent player movement after level completion/transport
 player_locked = False
 # Player health
@@ -1293,7 +1306,22 @@ while running:
         except Exception:
             pass
     # Draw player (always centered since cam follows)
-    pygame.draw.circle(screen, (0, 0, 255), (SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2), player_radius)
+    # Update & draw character sprite centered at the player screen position.
+    # We let the sprite update its animation state (reads input) but keep it anchored
+    # to the screen center by resetting midbottom each frame.
+    try:
+        if character_sprite:
+            character_sprite.update()  # advances animation / facing based on input
+            character_sprite.rect.midbottom = (SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2 + player_radius)
+            screen.blit(character_sprite.image, character_sprite.rect)
+        else:
+            # fallback to simple circle if sprite missing
+            pygame.draw.circle(screen, (0, 0, 255), (SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2), player_radius)
+    except Exception:
+        try:
+            pygame.draw.circle(screen, (0, 0, 255), (SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2), player_radius)
+        except Exception:
+            pass
     # Draw mushroom ball only when not transporting
     if not transporting:
         mushroom_ball.draw(screen, cam_x, cam_y)
@@ -1321,8 +1349,14 @@ while running:
         mouse_screen = pygame.mouse.get_pos()
         mouse_world_pos[0] = mouse_screen[0] + cam_x
         mouse_world_pos[1] = mouse_screen[1] + cam_y
-        # Line in screen coords
-        start_screen = (SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2)
+        # Line in screen coords — start from the character sprite center (middle of character)
+        try:
+            if character_sprite:
+                start_screen = character_sprite.rect.center
+            else:
+                start_screen = (SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2)
+        except Exception:
+            start_screen = (SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2)
         end_screen = (mouse_screen[0], mouse_screen[1])
         pygame.draw.line(screen, (255, 255, 0), start_screen, end_screen, 2)
     # Draw minimap with real map texture
