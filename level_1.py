@@ -202,7 +202,7 @@ last_ground_state = True
 # Debug text for collision checking
 collision_debug = Text(
     text='No collision data',
-    position=(-0.5, 0.4),
+    position=(-0.85, -0.35),
     scale=1.2,
     origin=(0, 0),
     background=True,
@@ -212,7 +212,7 @@ collision_debug = Text(
 # Collision type indicator
 collision_type_text = Text(
     text='Collision: None',
-    position=(-0.5, 0.35),
+    position=(-0.85, -0.40),
     scale=1.2,
     origin=(0, 0),
     background=True,
@@ -222,7 +222,7 @@ collision_type_text = Text(
 # Animation state indicator
 animation_debug_text = Text(
     text='Animation: idle',
-    position=(-0.5, 0.30),
+    position=(-0.85, -0.45),
     scale=1.2,
     origin=(0, 0),
     background=True,
@@ -380,8 +380,9 @@ diagnostic_min_zoom = 3
 diagnostic_max_zoom = 40  # Increased max zoom for more zoomed out view
 diagnostic_zoom = 25  # Starting with a more zoomed out view
 
-# Score display
+# Score and lives display
 score = 0
+lives = 3
 score_text = Text(
     text='Mushroom Coins collected: 0',
     position=(-0.5, 0.45),
@@ -389,6 +390,17 @@ score_text = Text(
     origin=(0, 0),
     background=True
 )
+
+lives_text = Text(
+    text='Lives: 3',
+    position=(-0.5, 0.40),
+    scale=1.2,
+    origin=(0, 0),
+    background=True
+)
+
+# Store initial player position for respawn
+initial_player_position = Vec3(12, 0.25, -32)
 
 # Zoom level indicator
 zoom_indicator = Text(
@@ -409,13 +421,14 @@ def check_coin_collection(coin, player):
 
 def check_collision(new_position):
     """Check if new position would collide with a wall or trap"""
+    global lives
     # Convert world position to UV coordinates
     scale_x, _, scale_z = collision_ground.scale
     tex_x = int((new_position.x / scale_x + 0.5) * collision_ground.texture.width)
     tex_z = int((new_position.z / scale_z + 0.5) * collision_ground.texture.height)
     
     try:
-        # Get color at position
+        # Get color at position from collision map
         color = collision_ground.texture.get_pixel(tex_x, tex_z)
         
         # Debug color information
@@ -439,7 +452,11 @@ def check_collision(new_position):
         else:
             collision_type_text.text = 'Collision: None (Safe)'
         
-        return is_wall or is_trap
+        return is_wall
+    except Exception as e:
+        collision_debug.text = f'Error: {str(e)}'
+        collision_type_text.text = 'Collision: ERROR'
+        return True  # Assume collision on error
     except Exception as e:
         collision_debug.text = f'Error: {str(e)}'
         collision_type_text.text = 'Collision: ERROR'
@@ -473,6 +490,46 @@ def check_ground(position):
         print(f"Ground check error: {e}")
         return False  # If there's an error, assume no ground
 
+def check_trap_collision():
+    """Check if player is on a trap"""
+    global lives
+    # Convert player position to UV coordinates
+    scale_x, _, scale_z = collision_ground.scale
+    tex_x = int((player.x / scale_x + 0.5) * collision_ground.texture.width)
+    tex_z = int((player.z / scale_z + 0.5) * collision_ground.texture.height)
+    
+    try:
+        # Get color at current position from collision map
+        color = collision_ground.texture.get_pixel(tex_x, tex_z)
+        
+        # Convert color values to 0-255 range for easier comparison
+        r = int(color[0] * 255)
+        g = int(color[1] * 255)
+        b = int(color[2] * 255)
+        
+        # Check if it's near the trap color (181, 230, 29) with some tolerance
+        is_trap = (abs(r - 181) < 20 and 
+                  abs(g - 230) < 20 and 
+                  abs(b - 29) < 20)
+        
+        if is_trap:
+            # Lose a life and respawn
+            lives -= 1
+            lives_text.text = f'Lives: {lives}'
+            # Reset position to initial spawn point
+            player.position = initial_player_position
+            # Reset velocity and animation state
+            return True
+        
+        # Debug output
+        if diagnostic_mode:
+            print(f"Current color: R:{r} G:{g} B:{b}")
+            
+        return False
+    except Exception as e:
+        print(f"Trap check error: {e}")
+        return False
+
 def update():
     global score, diagnostic_mode, prev_t_state
     global current_animation, velocity_y, on_ground, facePosition
@@ -480,6 +537,12 @@ def update():
     
     # Update coin animation
     update_coin_animation()
+    
+    # Check if player is on a trap
+    if check_trap_collision():
+        velocity_y = 0
+        on_ground = True
+        is_dashing = False
     
     # Toggle diagnostic mode when T is pressed (not held)
     if held_keys['t'] and not prev_t_state:
