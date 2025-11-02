@@ -38,7 +38,7 @@ def save_game_data(data):
         print("[WARN] Could not save game_data.json:", e)
 
 def calculate_score(mushrooms, lives):
-    return int(100 * mushrooms + lives * 16.67)
+    return int((350 / 3) * mushrooms)
 
 # Define sound effects
 mushroom_coin_sound = Audio('assets/sounds/level_1_mushroom-coin-poof.mp3', autoplay=False, loop=False)
@@ -49,6 +49,9 @@ success_sound = Audio('assets/sounds/level_1_mushroom-coin-poof.mp3', autoplay=F
 app = Ursina()
 # Remove the internal exit button
 window.exit_button.enabled = False
+
+# Set background to black for out-of-bounds area
+window.color = color.black
 
 # Load and play background music
 bgm_path = os.path.join('assets', 'music', 'Level_1_bgm_In_Gloomy_Meditation.mp3')
@@ -298,36 +301,6 @@ particle_count = 50  # Number of particles in the scene
 diagnostic_mode = False
 prev_t_state = False
 
-# Debug text for collision checking
-collision_debug = Text(
-    text='No collision data',
-    position=(-0.85, -0.35),
-    scale=1.2,
-    origin=(0, 0),
-    background=True,
-    enabled=False  # Hidden by default
-)
-
-# Collision type indicator
-collision_type_text = Text(
-    text='Collision: None',
-    position=(-0.85, -0.40),
-    scale=1.2,
-    origin=(0, 0),
-    background=True,
-    enabled=False  # Hidden by default
-)
-
-# Animation state indicator
-animation_debug_text = Text(
-    text='Animation: idle',
-    position=(-0.85, -0.45),
-    scale=1.2,
-    origin=(0, 0),
-    background=True,
-    enabled=False  # Hidden by default
-)
-
 # Create player with sprite sheet animation
 player = SpriteSheetAnimation(
     'character/chamove', 
@@ -357,6 +330,23 @@ player = SpriteSheetAnimation(
 )
 
 player.origin = (0, -0.15)
+
+# Create player glow/aura effect (circular)
+player_glow = Entity(
+    parent=player,
+    model='circle',  # Changed to circle for round glow
+    scale=2.2,  # Slightly larger than player
+    position=(0, -0.05, 0),  # Slightly below player on Y axis to appear behind
+    rotation_x=0,  # Match player's rotation
+    color=color.rgba(150, 200, 255, 40),  # Soft blue glow - more transparent
+    alpha=0.15,  # More transparent
+    double_sided=True
+)
+
+# Glow animation properties
+player_glow.pulse_time = 0
+player_glow.base_scale = 2.2
+player_glow.base_alpha = 0.15  # More transparent base alpha
 
 # Initialize particle system
 for i in range(particle_count):
@@ -453,6 +443,25 @@ red_coin.frame_duration = 0.2    # Time per frame in seconds
 green_coin.frame_duration = 0.2  # Time per frame in seconds
 blue_coin.frame_duration = 0.2   # Time per frame in seconds
 
+# Idle pulsing animation variables
+red_coin.pulse_time = 0
+green_coin.pulse_time = 0
+blue_coin.pulse_time = 0
+red_coin.base_scale = 1
+green_coin.base_scale = 1
+blue_coin.base_scale = 1
+
+# Collection animation variables
+red_coin.is_collecting = False
+green_coin.is_collecting = False
+blue_coin.is_collecting = False
+red_coin.collect_time = 0
+green_coin.collect_time = 0
+blue_coin.collect_time = 0
+red_coin.collect_duration = 0.5  # Duration of expand animation before disappearing
+green_coin.collect_duration = 0.5
+blue_coin.collect_duration = 0.5
+
 def update_coin_animation():
     # Update red coin
     red_coin.animation_time += time.dt
@@ -477,6 +486,59 @@ def update_coin_animation():
         blue_coin.frame = (blue_coin.frame + 1) % 5
         blue_coin.texture_offset = (blue_coin.frame/5, 0)
         blue_coin.animation_time = 0
+    
+    # Idle pulsing animation for red coin
+    if red_coin.enabled and not red_coin.is_collecting:
+        red_coin.pulse_time += time.dt * 3  # Speed of pulsing
+        pulse_scale = red_coin.base_scale + math.sin(red_coin.pulse_time) * 0.15  # Pulse between 0.85 and 1.15
+        red_coin.scale = (pulse_scale, pulse_scale)
+    
+    # Idle pulsing animation for green coin
+    if green_coin.enabled and not green_coin.is_collecting:
+        green_coin.pulse_time += time.dt * 3
+        pulse_scale = green_coin.base_scale + math.sin(green_coin.pulse_time) * 0.15
+        green_coin.scale = (pulse_scale, pulse_scale)
+    
+    # Idle pulsing animation for blue coin
+    if blue_coin.enabled and not blue_coin.is_collecting:
+        blue_coin.pulse_time += time.dt * 3
+        pulse_scale = blue_coin.base_scale + math.sin(blue_coin.pulse_time) * 0.15
+        blue_coin.scale = (pulse_scale, pulse_scale)
+    
+    # Collection animation for red coin
+    if red_coin.is_collecting:
+        red_coin.collect_time += time.dt
+        # Expand animation (scale from 1 to 2.5)
+        expand_progress = red_coin.collect_time / red_coin.collect_duration
+        expand_scale = 1 + (expand_progress * 1.5)  # Grows from 1 to 2.5
+        red_coin.scale = (expand_scale, expand_scale)
+        
+        # Disable after animation completes
+        if red_coin.collect_time >= red_coin.collect_duration:
+            red_coin.enabled = False
+            red_coin.is_collecting = False
+    
+    # Collection animation for green coin
+    if green_coin.is_collecting:
+        green_coin.collect_time += time.dt
+        expand_progress = green_coin.collect_time / green_coin.collect_duration
+        expand_scale = 1 + (expand_progress * 1.5)
+        green_coin.scale = (expand_scale, expand_scale)
+        
+        if green_coin.collect_time >= green_coin.collect_duration:
+            green_coin.enabled = False
+            green_coin.is_collecting = False
+    
+    # Collection animation for blue coin
+    if blue_coin.is_collecting:
+        blue_coin.collect_time += time.dt
+        expand_progress = blue_coin.collect_time / blue_coin.collect_duration
+        expand_scale = 1 + (expand_progress * 1.5)
+        blue_coin.scale = (expand_scale, expand_scale)
+        
+        if blue_coin.collect_time >= blue_coin.collect_duration:
+            blue_coin.enabled = False
+            blue_coin.is_collecting = False
 
 # Create camera positioned above the player for top-down view
 camera.position = (0, 21, 0)  # Set default height to 21
@@ -513,6 +575,15 @@ lives_text = Text(
     scale=1.2,
     origin=(0, 0),
     background=True
+)
+
+guide_hint_text = Text(
+    text='Hold "Y" for Guide',
+    position=(0.35, 0.45),
+    scale=1.2,
+    origin=(0, 0),
+    background=True,
+    color=color.yellow
 )
 
 # Game Over screen elements
@@ -628,6 +699,58 @@ zoom_indicator = Text(
     enabled=False  # Hidden
 )
 
+# Info/Guide Panel (shown when Y is held)
+info_panel = Entity(
+    model='quad',
+    color=color.black66,
+    scale=(2, 1),
+    position=(0, 0),
+    parent=camera.ui,
+    enabled=False
+)
+
+info_title = Text(
+    text='GAME GUIDE',
+    scale=3,
+    origin=(0, 0),
+    position=(0, 0.4),
+    color=color.yellow,
+    parent=camera.ui,
+    enabled=False
+)
+
+info_text = Text(
+    text='''
+1) Collect 3 Mushroom Coins to pass
+   They're located throughout the map
+
+2) Be careful! Take damage from spikes
+   three times and it's game over!
+
+3) Control movements:
+   - A/D: Move left/right
+   - Space: Jump
+   - Shift: Dash
+   - S: Duck (on ground) / Fast fall (in air)
+
+4) Q/E or mouse scroll to zoom in and out
+
+5) Press "T" to toggle diagnostic view
+   and see what happens!
+''',
+    scale=1.5,
+    origin=(0, 0),
+    position=(0, -0.05),
+    color=color.white,
+    parent=camera.ui,
+    enabled=False,
+    line_height=1.2
+)
+
+# Track Y key state for info display
+show_info = False
+prev_y_state = False
+
 def check_coin_collection(coin, player):
     # Calculate distance between player and coin
     distance = (coin.position - player.position).length()
@@ -689,9 +812,6 @@ def check_collision(new_position):
         # Get color at position from collision map
         color = collision_ground.texture.get_pixel(tex_x, tex_z)
         
-        # Debug color information
-        collision_debug.text = f'Pos: ({tex_x}, {tex_z}) Color: R:{int(color[0]*255)} G:{int(color[1]*255)} B:{int(color[2]*255)}'
-        
         # Check if it's near the wall color (ED1C24 - red) with some tolerance
         is_wall = (abs(color[0] - 237/255) < 0.1 and 
                   abs(color[1] - 28/255) < 0.1 and 
@@ -702,22 +822,8 @@ def check_collision(new_position):
                   abs(color[1] - 199/255) < 0.1 and 
                   abs(color[2] - 34/255) < 0.1)
         
-        # Update collision type indicator
-        if is_wall:
-            collision_type_text.text = 'Collision: WALL (Red)'
-        elif is_trap:
-            collision_type_text.text = 'Collision: TRAP (Green)'
-        else:
-            collision_type_text.text = 'Collision: None (Safe)'
-        
         return is_wall
     except Exception as e:
-        collision_debug.text = f'Error: {str(e)}'
-        collision_type_text.text = 'Collision: ERROR'
-        return True  # Assume collision on error
-    except Exception as e:
-        collision_debug.text = f'Error: {str(e)}'
-        collision_type_text.text = 'Collision: ERROR'
         return True  # Assume collision on error
 
 def check_ground(position):
@@ -811,7 +917,7 @@ def update():
     moving = False
     squating = False
     #character value
-    global score, diagnostic_mode, prev_t_state
+    global score, diagnostic_mode, prev_t_state, show_info, prev_y_state
     
     # Skip all updates if game is completed (except for animations)
     if is_game_completed:
@@ -819,6 +925,25 @@ def update():
         
     # Update coin animation
     update_coin_animation()
+    
+    # Update player glow animation (pulsing effect)
+    player_glow.pulse_time += time.dt * 2  # Pulse speed
+    pulse = math.sin(player_glow.pulse_time) * 0.15  # Pulse range
+    player_glow.scale = player_glow.base_scale + pulse
+    
+    # Adjust glow intensity based on player state
+    if is_dashing:
+        # Brighter and more intense during dash
+        player_glow.color = color.rgba(180, 220, 255, 60)
+        player_glow.alpha = 0.25
+    elif not on_ground:
+        # Slightly brighter when jumping/in air
+        player_glow.color = color.rgba(160, 210, 255, 50)
+        player_glow.alpha = 0.2
+    else:
+        # Normal subtle glow
+        player_glow.color = color.rgba(150, 200, 255, 40)
+        player_glow.alpha = 0.15
     
     # Check if player is on a trap
     if check_trap_collision():
@@ -831,10 +956,19 @@ def update():
         diagnostic_mode = not diagnostic_mode
     prev_t_state = held_keys['t']
     
-    # Update UI elements based on diagnostic mode
-    collision_debug.enabled = diagnostic_mode
-    collision_type_text.enabled = diagnostic_mode
-    animation_debug_text.enabled = diagnostic_mode
+    # Show info panel when Y is held
+    if held_keys['y']:
+        if not show_info:
+            show_info = True
+            info_panel.enabled = True
+            info_title.enabled = True
+            info_text.enabled = True
+    else:
+        if show_info:
+            show_info = False
+            info_panel.enabled = False
+            info_title.enabled = False
+            info_text.enabled = False
     
     # Always update collision info at current position for diagnostic display
     if diagnostic_mode:
@@ -847,20 +981,23 @@ def update():
         camera.rotation_x = lerp(camera.rotation_x, 90, time.dt * 5)
     
     # Check coin collection
-    if red_coin.enabled and check_coin_collection(red_coin, player):
-        red_coin.enabled = False
+    if red_coin.enabled and not red_coin.is_collecting and check_coin_collection(red_coin, player):
+        red_coin.is_collecting = True
+        red_coin.collect_time = 0
         score += 1
         score_text.text = f'Mushroom Coins collected: {score}'
         mushroom_coin_sound.play()
         
-    if green_coin.enabled and check_coin_collection(green_coin, player):
-        green_coin.enabled = False
+    if green_coin.enabled and not green_coin.is_collecting and check_coin_collection(green_coin, player):
+        green_coin.is_collecting = True
+        green_coin.collect_time = 0
         score += 1
         score_text.text = f'Mushroom Coins collected: {score}'
         mushroom_coin_sound.play()
         
-    if blue_coin.enabled and check_coin_collection(blue_coin, player):
-        blue_coin.enabled = False
+    if blue_coin.enabled and not blue_coin.is_collecting and check_coin_collection(blue_coin, player):
+        blue_coin.is_collecting = True
+        blue_coin.collect_time = 0
         score += 1
         score_text.text = f'Mushroom Coins collected: {score}'
         mushroom_coin_sound.play()
@@ -869,10 +1006,6 @@ def update():
     if score == 3:
         show_success()
     
-    # Update animation debug BEFORE any animation changes
-    if diagnostic_mode:
-        animation_debug_text.text = f'Animation: {current_animation} | Moving: {moving} | OnGround: {on_ground} | Dashing: {is_dashing}'
-
     # --- update jump cooldown ---
     if not can_jump:
         jump_timer += time.dt
@@ -1162,6 +1295,7 @@ def show_success():
         
         # Update game data
         game_data["mushrooms"] += score  # Add collected mushrooms
+        game_data["mushrooms"] = min(game_data["mushrooms"], 3)  # Cap at 3 mushrooms
         game_data["lives"] = lives  # Update remaining lives
         game_data["score"] = calculate_score(game_data["mushrooms"], lives)  # Update total score
         if 2 not in game_data["unlocked_levels"]:
