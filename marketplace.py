@@ -20,6 +20,28 @@ clock = pygame.time.Clock()
 font = pygame.font.Font(None, 24)
 big_font = pygame.font.Font(None, 36)
 
+# Sound setup (optional)
+hover_sfx = None
+click_sfx = None
+try:
+    try:
+        pygame.mixer.init()
+    except Exception:
+        pass
+    if pygame.mixer.get_init():
+        if __import__('os').path.exists('assets/sounds/Hover.mp3'):
+            try:
+                hover_sfx = pygame.mixer.Sound('assets/sounds/Hover.mp3')
+            except Exception:
+                hover_sfx = None
+        if __import__('os').path.exists('assets/sounds/Click.mp3'):
+            try:
+                click_sfx = pygame.mixer.Sound('assets/sounds/Click.mp3')
+            except Exception:
+                click_sfx = None
+except Exception:
+    hover_sfx = click_sfx = None
+
 # ---------- Helpers ----------
 def load_inventory():
     try:
@@ -191,11 +213,18 @@ class Marketplace:
 
     def handle_events(self, event):
         if event.type == pygame.MOUSEMOTION and self.state == 'store':
+            prev = self.hovered_item
             self.hovered_item = None
             for item_key, rect in self.item_rects.items():
                 if rect.collidepoint(event.pos):
                     self.hovered_item = item_key
                     break
+            # play hover sfx when newly hovered
+            if self.hovered_item and self.hovered_item != prev and hover_sfx:
+                try:
+                    hover_sfx.play()
+                except Exception:
+                    pass
         elif event.type == pygame.MOUSEBUTTONDOWN:
             mouse_pos = event.pos
             if self.state == 'entry' and self.enter_button.collidepoint(mouse_pos):
@@ -213,11 +242,21 @@ class Marketplace:
                             # Show short confirmation popup
                             self.confirmation_text = f"Bought {item['name']}! Owned: {self.inventory[item_key]}"
                             self.confirmation_timer = 90  # frames (~1.5s at 60fps)
+                            try:
+                                if click_sfx:
+                                    click_sfx.play()
+                            except Exception:
+                                pass
                             print(f"Bought {item['name']}! Remaining Points: {self.points} (Owned: {self.inventory[item_key]})")
                         else:
                             print("Not enough points!")
                 if self.start_button.collidepoint(mouse_pos):
                     save_inventory(self.inventory)
+                    try:
+                        if click_sfx:
+                            click_sfx.play()
+                    except Exception:
+                        pass
                     print("Starting Level 2 with:", self.inventory)
                     return ('level2', self.inventory)
 
@@ -331,7 +370,7 @@ class Marketplace:
                     screen.blit(cnt_text, cnt_rect)
 
             pygame.draw.rect(screen, (0, 200, 0), self.start_button)
-            screen.blit(font.render("Start Gauntlet", True, (0, 0, 0)), (320, 510))
+            screen.blit(font.render("Start Level 2~", True, (0, 0, 0)), (320, 510))
 
             if self.hovered_item:
                 tooltip = self.items[self.hovered_item]['tooltip']
@@ -367,18 +406,15 @@ def main():
             if isinstance(result, tuple) and result[0] == 'level2':
                 selected_powerups = result[1]
                 print("Carry these into Level 2:", selected_powerups)
-                # Launch Level 2 as a separate process and exit marketplace.
+                # Save inventory and exit this process with a special return code
+                # so the caller (main menu) can decide to launch Level 2.
+                save_inventory(selected_powerups)
                 try:
                     pygame.quit()
                 except Exception:
                     pass
-                # Use the same Python interpreter to run the level script
-                try:
-                    import subprocess
-                    subprocess.Popen([sys.executable, "level_2.py"])  # non-blocking
-                except Exception as e:
-                    print("Failed to launch Level 2 directly:", e)
-                running = False
+                # Exit with code 2 to indicate "start level2"
+                sys.exit(2)
 
         marketplace.update()
         screen.fill((0, 0, 0))
