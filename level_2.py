@@ -619,14 +619,27 @@ while running:
                     streak = 0
                 mushroom_ball.reset(player_pos)
             if event.key == pygame.K_e:
-                # If chest is opened and player presses E, exit back to main menu
+                # If chest is opened and player presses E, launch the ending scene
                 if post_transport and chest_opened:
                     try:
                         save_inventory(inventory)
                     except Exception:
                         pass
-                    pygame.quit()
-                    sys.exit()
+                    
+                    # Import and run the ending scene
+                    try:
+                        import end1
+                        # Pass any necessary data to the ending scene
+                        end1.run_ending(score=score, inventory=inventory)
+                    except ImportError:
+                        print("Error: end1.py not found!")
+                        # Fallback: just quit
+                        pygame.quit()
+                        sys.exit()
+                    except Exception as e:
+                        print(f"Error launching ending scene: {e}")
+                        pygame.quit()
+                        sys.exit()
 
         # Optional: Zoom with mouse wheel (basic)
         if event.type == pygame.MOUSEWHEEL:

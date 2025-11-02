@@ -15,10 +15,7 @@ clock = pygame.time.Clock()
 
 # Colors
 WHITE = (255, 255, 255)
-RED = (255, 0, 0)
-GREEN = (0, 255, 0)
 BLUE = (0, 0, 255)
-YELLOW = (255, 255, 0)
 
 # Try to load your original map
 try:
@@ -55,7 +52,7 @@ except:
 START_POS = [5193.0, 4434.0]    # Starting position
 MIDDLE_POS = [5193.0, 895.0]    # First target (vertical movement)
 CHEST_POS = [5800.0, 895.0]     # Final target (horizontal movement)
-transport_speed = 50.0  # Fast movement speed
+transport_speed = 15.0  # Slower movement speed
 
 # Transport state
 TRANSPORT_STATES = {
@@ -66,14 +63,9 @@ TRANSPORT_STATES = {
 }
 current_transport_state = TRANSPORT_STATES['IDLE']
 
-# Try to load chest image
-try:
-    chest_img = pygame.image.load('assets/images/chest_closed.png').convert_alpha()
-    print("Chest image loaded")
-except:
-    print("Chest image not found, using placeholder")
-    chest_img = pygame.Surface((64, 48), pygame.SRCALPHA)
-    pygame.draw.rect(chest_img, (100, 60, 20), chest_img.get_rect())
+# Smooth movement variables
+smooth_path = []
+path_index = 0
 
 # Game state
 player_pos = START_POS.copy()
@@ -88,50 +80,71 @@ cam_y = player_pos[1] - SCREEN_HEIGHT // 2
 overlay = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
 overlay.fill((0, 0, 0, 150))  # Black with 150 alpha (medium darkness)
 
+def create_smooth_path(start, middle, end, num_points=10):
+    """Create a smooth curved path through the points"""
+    path = []
+    
+    # First segment: start to middle with slight curve
+    for i in range(num_points):
+        t = i / num_points
+        # Add a slight curve to the first segment
+        control_x = start[0] + (middle[0] - start[0]) * 0.5
+        control_y = start[1] + (middle[1] - start[1]) * 0.8
+        
+        # Quadratic bezier curve
+        x = (1-t)**2 * start[0] + 2*(1-t)*t * control_x + t**2 * middle[0]
+        y = (1-t)**2 * start[1] + 2*(1-t)*t * control_y + t**2 * middle[1]
+        path.append([x, y])
+    
+    # Second segment: middle to end with slight curve
+    for i in range(num_points):
+        t = i / num_points
+        # Add a slight curve to the second segment
+        control_x = middle[0] + (end[0] - middle[0]) * 0.3
+        control_y = middle[1] + (end[1] - middle[1]) * 0.2
+        
+        # Quadratic bezier curve
+        x = (1-t)**2 * middle[0] + 2*(1-t)*t * control_x + t**2 * end[0]
+        y = (1-t)**2 * middle[1] + 2*(1-t)*t * control_y + t**2 * end[1]
+        path.append([x, y])
+    
+    return path
+
 def start_transport():
-    global current_transport_state
+    global current_transport_state, smooth_path, path_index
     current_transport_state = TRANSPORT_STATES['MOVING_TO_MIDDLE']
-    print("Transport started!")
+    
+    # Create smooth path
+    smooth_path = create_smooth_path(START_POS, MIDDLE_POS, CHEST_POS)
+    path_index = 0
+    print("Transport started with smooth path!")
 
 def update_transport():
-    global player_pos, current_transport_state, end_scene_started
+    global player_pos, current_transport_state, end_scene_started, path_index
     
     if current_transport_state == TRANSPORT_STATES['IDLE']:
         return
     
-    if current_transport_state == TRANSPORT_STATES['MOVING_TO_MIDDLE']:
-        # Move vertically to middle position
-        dx = MIDDLE_POS[0] - player_pos[0]
-        dy = MIDDLE_POS[1] - player_pos[1]
+    if path_index < len(smooth_path):
+        # Move to next point in smooth path
+        target_pos = smooth_path[path_index]
+        dx = target_pos[0] - player_pos[0]
+        dy = target_pos[1] - player_pos[1]
         distance = math.sqrt(dx*dx + dy*dy)
         
         if distance < transport_speed:
-            # Reached middle position
-            player_pos = MIDDLE_POS.copy()
-            current_transport_state = TRANSPORT_STATES['MOVING_TO_CHEST']
-            print("Reached middle position! Moving to chest...")
+            # Reached this path point
+            player_pos = target_pos.copy()
+            path_index += 1
+            
+            # Check if we've reached the final destination
+            if path_index >= len(smooth_path):
+                current_transport_state = TRANSPORT_STATES['COMPLETE']
+                end_scene_started = True
+                print("Transport completed with smooth path!")
+                print(f"Final position: {player_pos}")
         else:
-            # Move toward middle position
-            direction_x = dx / distance
-            direction_y = dy / distance
-            player_pos[0] += direction_x * transport_speed
-            player_pos[1] += direction_y * transport_speed
-    
-    elif current_transport_state == TRANSPORT_STATES['MOVING_TO_CHEST']:
-        # Move horizontally to chest position
-        dx = CHEST_POS[0] - player_pos[0]
-        dy = CHEST_POS[1] - player_pos[1]
-        distance = math.sqrt(dx*dx + dy*dy)
-        
-        if distance < transport_speed:
-            # Reached chest position
-            player_pos = CHEST_POS.copy()
-            current_transport_state = TRANSPORT_STATES['COMPLETE']
-            end_scene_started = True
-            print("Transport completed!")
-            print(f"Final position: {player_pos}")
-        else:
-            # Move toward chest position
+            # Move toward next path point
             direction_x = dx / distance
             direction_y = dy / distance
             player_pos[0] += direction_x * transport_speed
@@ -184,18 +197,7 @@ while running:
     src_rect = pygame.Rect(cam_x, cam_y, SCREEN_WIDTH, SCREEN_HEIGHT)
     screen.blit(map_image, (0, 0), src_rect)
     
-    # Draw position markers
-    start_screen_x = int(START_POS[0] - cam_x)
-    start_screen_y = int(START_POS[1] - cam_y)
-    pygame.draw.circle(screen, GREEN, (start_screen_x, start_screen_y), 15, 3)
-    
-    middle_screen_x = int(MIDDLE_POS[0] - cam_x)
-    middle_screen_y = int(MIDDLE_POS[1] - cam_y)
-    pygame.draw.circle(screen, YELLOW, (middle_screen_x, middle_screen_y), 12, 3)
-    
-    chest_screen_x = int(CHEST_POS[0] - cam_x - chest_img.get_width() // 2)
-    chest_screen_y = int(CHEST_POS[1] - cam_y - chest_img.get_height() // 2)
-    screen.blit(chest_img, (chest_screen_x, chest_screen_y))
+    # NO position markers - completely removed
     
     # Draw player character
     if character_sprite:
@@ -233,7 +235,6 @@ while running:
     
     # Draw UI text (always on top)
     font = pygame.font.Font(None, 36)
-    small_font = pygame.font.Font(None, 24)
     
     pos_text = font.render(f"Position: ({int(player_pos[0])}, {int(player_pos[1])})", True, WHITE)
     screen.blit(pos_text, (10, 10))
@@ -246,21 +247,7 @@ while running:
         end_text = font.render("Transport complete! Press E for end scene", True, (0, 255, 0))
         screen.blit(end_text, (10, 50))
     
-    # Draw position labels (only if not transporting or with higher contrast)
-    label_alpha = 128 if is_transporting else 255
-    start_label = small_font.render("START", True, GREEN)
-    start_label.set_alpha(label_alpha)
-    screen.blit(start_label, (start_screen_x - 20, start_screen_y - 25))
-    
-    middle_label = small_font.render("MIDDLE", True, YELLOW)
-    middle_label.set_alpha(label_alpha)
-    screen.blit(middle_label, (middle_screen_x - 25, middle_screen_y - 25))
-    
-    chest_label = small_font.render("CHEST", True, RED)
-    chest_label.set_alpha(label_alpha)
-    screen.blit(chest_label, (chest_screen_x + 10, chest_screen_y - 30))
-    
-    # Draw minimap in corner
+    # Draw minimap in corner (optional - remove if you don't want it either)
     minimap_size = 200
     minimap_surface = pygame.Surface((minimap_size, minimap_size))
     minimap_surface.fill((0, 0, 0))
@@ -269,10 +256,10 @@ while running:
     scale_x = minimap_size / WORLD_WIDTH
     scale_y = minimap_size / WORLD_HEIGHT
     
-    # Draw positions on minimap
-    pygame.draw.circle(minimap_surface, GREEN, (int(START_POS[0] * scale_x), int(START_POS[1] * scale_y)), 3)
-    pygame.draw.circle(minimap_surface, YELLOW, (int(MIDDLE_POS[0] * scale_x), int(MIDDLE_POS[1] * scale_y)), 3)
-    pygame.draw.circle(minimap_surface, RED, (int(CHEST_POS[0] * scale_x), int(CHEST_POS[1] * scale_y)), 3)
+    # Draw positions on minimap (optional - remove these lines if you don't want minimap markers)
+    # pygame.draw.circle(minimap_surface, GREEN, (int(START_POS[0] * scale_x), int(START_POS[1] * scale_y)), 3)
+    # pygame.draw.circle(minimap_surface, YELLOW, (int(MIDDLE_POS[0] * scale_x), int(MIDDLE_POS[1] * scale_y)), 3)
+    # pygame.draw.circle(minimap_surface, RED, (int(CHEST_POS[0] * scale_x), int(CHEST_POS[1] * scale_y)), 3)
     
     # Draw player on minimap
     player_minimap_x = int(player_pos[0] * scale_x)
