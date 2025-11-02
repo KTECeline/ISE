@@ -297,6 +297,8 @@ for ending in endings:
         pygame.display.flip()
         clock.tick(60)
 
-# Clean up and exit after all endings
+
+# After all endings are done, go back to main menu
+# Endings finished, go back to main menu
 import main_menu
 main_menu.main_loop()
