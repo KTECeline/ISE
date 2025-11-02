@@ -4,6 +4,37 @@ from PIL import Image
 import random
 import math
 import os
+import json
+
+# Game data file
+GAME_DATA_FILE = "game_data.json"
+
+def load_game_data():
+    if os.path.exists(GAME_DATA_FILE):
+        try:
+            with open(GAME_DATA_FILE, "r") as f:
+                return json.load(f)
+        except Exception as e:
+            print("[WARN] Could not read game_data.json:", e)
+    return {
+        "player_name": "",
+        "score": 0,
+        "lives": 3,
+        "mushrooms": 0,
+        "current_level": 1,
+        "inventory": {},
+        "unlocked_levels": [1]
+    }
+
+def save_game_data(data):
+    try:
+        with open(GAME_DATA_FILE, "w") as f:
+            json.dump(data, f, indent=4)
+    except Exception as e:
+        print("[WARN] Could not save game_data.json:", e)
+
+def calculate_score(mushrooms, lives):
+    return int(100 * mushrooms + lives * 16.67)
 
 # Define sound effects
 mushroom_coin_sound = Audio('assets/sounds/level_1_mushroom-coin-poof.mp3', autoplay=False, loop=False)
@@ -444,12 +475,13 @@ diagnostic_max_zoom = 1000  # Increased max zoom for more zoomed out view
 diagnostic_zoom = 25  # Starting with a more zoomed out view
 
     # Score, lives and game state
-score = 0
-lives = 3
+game_data = load_game_data()
+score = 0  # Mushroom coins collected in this level
+lives = game_data["lives"]
 is_game_over = False
 is_game_completed = False
 score_text = Text(
-    text='Mushroom Coins collected: 0',
+    text=f'Mushroom Coins collected: {score}',
     position=(-0.5, 0.45),
     scale=1.2,
     origin=(0, 0),
@@ -687,6 +719,11 @@ def check_trap_collision():
             
             # Play damage sound
             damage_sound.play()
+            
+            # Save game data with updated lives
+            game_data["lives"] = lives
+            game_data["score"] = calculate_score(game_data["mushrooms"], lives)
+            save_game_data(game_data)
             
             # Check if game over
             if lives <= 0:
@@ -991,12 +1028,21 @@ def input(key):
 
 # Function to show success screen
 def show_success():
-    global total_time, is_game_completed
+    global total_time, is_game_completed, game_data
     if not is_game_completed:  # Only calculate time and show screen if not already completed
         is_game_completed = True
         total_time = int(time.time() - start_time)
         minutes = total_time // 60
         seconds = total_time % 60
+        
+        # Update game data
+        game_data["mushrooms"] += score  # Add collected mushrooms
+        game_data["lives"] = lives  # Update remaining lives
+        game_data["score"] = calculate_score(game_data["mushrooms"], lives)  # Update total score
+        if 2 not in game_data["unlocked_levels"]:
+            game_data["unlocked_levels"].append(2)  # Unlock level 2
+        save_game_data(game_data)
+        
         success_panel.enabled = True
         success_text.enabled = True
         time_text.enabled = True
@@ -1010,7 +1056,12 @@ def show_success():
 
 # Function to show game over screen
 def show_game_over():
+    global game_data
     game_over_panel.enabled = True
+    # Update and save game data
+    game_data["lives"] = lives
+    game_data["score"] = calculate_score(game_data["mushrooms"], lives)
+    save_game_data(game_data)
     game_over_text.enabled = True
     retry_button.enabled = True
     # Disable player movement
@@ -1019,10 +1070,12 @@ def show_game_over():
     gameover_sound.play()
 
 def reset_game():
-    global lives, score, is_game_over, is_game_completed, start_time
+    global lives, score, is_game_over, is_game_completed, start_time, game_data
+    # Reload game data to get current lives
+    game_data = load_game_data()
     # Reset game state
-    lives = 3
-    score = 0
+    lives = game_data["lives"]
+    score = 0  # Reset mushrooms collected in this level
     is_game_over = False
     is_game_completed = False
     start_time = time.time()
