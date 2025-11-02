@@ -1,6 +1,46 @@
 from ursina import *
 import numpy as np
 from PIL import Image
+import random
+import math
+import os
+import json
+
+# Game data file
+GAME_DATA_FILE = "game_data.json"
+
+def load_game_data():
+    if os.path.exists(GAME_DATA_FILE):
+        try:
+            with open(GAME_DATA_FILE, "r") as f:
+                return json.load(f)
+        except Exception as e:
+            print("[WARN] Could not read game_data.json:", e)
+    return {
+        "player_name": "",
+        "score": 0,
+        "lives": 3,
+        "mushrooms": 0,
+        "current_level": 1,
+        "inventory": {},
+        "unlocked_levels": [1]
+    }
+
+def save_game_data(data):
+    try:
+        with open(GAME_DATA_FILE, "w") as f:
+            json.dump(data, f, indent=4)
+    except Exception as e:
+        print("[WARN] Could not save game_data.json:", e)
+
+def calculate_score(mushrooms, lives):
+    return int(100 * mushrooms + lives * 16.67)
+
+# Define sound effects
+mushroom_coin_sound = Audio('assets/sounds/level_1_mushroom-coin-poof.mp3', autoplay=False, loop=False)
+damage_sound = Audio('assets/sounds/level_1_damaged.mp3', autoplay=False, loop=False)
+gameover_sound = Audio('assets/sounds/level_1_gameover.wav', autoplay=False, loop=False)
+success_sound = Audio('assets/sounds/level_1_mushroom-coin-poof.mp3', autoplay=False, loop=False)  # Reusing coin sound for success
 
 app = Ursina()
 # Remove the internal exit button
@@ -54,30 +94,236 @@ collision_ground = Entity(
     visible=False  # Hide the collision map
 )
 
+# Create an upper layer with the inverted map for 3D effect
+upper_layer = Entity(
+    model='plane',
+    texture=load_texture('assets/textures/map/Level_1_The_Fungal_Ascent_Layering_Inverted.png'),
+    scale=(81, 1, 75),
+    position=(0, 0.5, 0),  # Slightly above the ground
+    alpha=1,  # Full opacity for black parts
+    collider=None  # Disable collision for the upper layer
+)
+
+# Custom shader to only show black parts
+upper_layer.shader = Shader(
+    vertex='''
+    #version 430
+    uniform mat4 p3d_ModelViewProjectionMatrix;
+    in vec4 p3d_Vertex;
+    in vec2 p3d_MultiTexCoord0;
+    out vec2 uv;
+    void main() {
+        gl_Position = p3d_ModelViewProjectionMatrix * p3d_Vertex;
+        uv = p3d_MultiTexCoord0;
+    }
+    ''',
+    
+    fragment='''
+    #version 430
+    uniform sampler2D p3d_Texture0;
+    in vec2 uv;
+    out vec4 fragColor;
+    void main() {
+        vec4 color = texture(p3d_Texture0, uv);
+        // Only show pixels that are black (RGB = 0,0,0)
+        if (color.r == 0.0 && color.g == 0.0 && color.b == 0.0) {
+            fragColor = vec4(0.0, 0.0, 0.0, 1.0);
+        } else {
+            fragColor = vec4(0.0, 0.0, 0.0, 0.0);  // Transparent for non-black pixels
+        }
+    }
+    '''
+)
+
+# Particle system for atmospheric spores
+class Particle(Entity):
+    def __init__(self, **kwargs):
+        # Randomize particle properties
+        base_scale = random.uniform(0.1, 0.25)  # Varied sizes
+        glow_strength = random.uniform(0.8, 1.2)  # Variable glow intensity
+        
+        # Store base colors for consistent recreation
+        self.base_color = color.rgba(200, 255, 180, 180)
+        self.glow_color = color.rgba(200, 255, 180, 100)
+        
+        # Create the main particle
+        super().__init__(
+            model='sphere',
+            scale=base_scale,
+            color=self.base_color,
+            **kwargs
+        )
+        
+        # Add glow effect as a child entity
+        self.glow = Entity(
+            parent=self,
+            model='sphere',
+            scale=1.5,  # Slightly larger than parent
+            color=self.glow_color,
+            alpha=0.3 * glow_strength,
+            double_sided=True  # Ensures glow is visible from all angles
+        )
+        
+        # Store initial properties
+        self.glow_strength = glow_strength
+        self.base_alpha = 180
+        self.glow_base_alpha = 100
+        
+        # Random movement parameters
+        self.velocity = Vec3(
+            random.uniform(-0.5, 0.5),
+            random.uniform(0.2, 0.8),
+            random.uniform(-0.5, 0.5)
+        )
+        self.lifetime = random.uniform(5, 10)
+        self.age = 0
+        self.float_speed = random.uniform(0.3, 0.8)  # More varied float speeds
+        self.drift_offset = random.uniform(0, 6.28)
+        
+        # Pulse effect parameters
+        self.pulse_speed = random.uniform(1, 3)
+        self.pulse_magnitude = random.uniform(0.1, 0.3)
+        self.base_scale = base_scale
+        
+    def update(self):
+        # Calculate distance to player
+        dist_to_player = (Vec3(self.x, self.y, self.z) - Vec3(player.x, player.y, player.z)).length()
+        
+        # Dynamic update rate based on distance
+        update_scale = min(1.0, 5.0 / (dist_to_player + 1))  # Closer = more frequent updates
+        
+        # Floating movement with sine wave drift, scaled by distance
+        self.age += time.dt * update_scale
+        drift = math.sin(self.age * self.float_speed + self.drift_offset) * 0.5
+        
+        # Movement scaled by distance
+        movement_scale = max(0.2, min(1.0, 3.0 / dist_to_player))  # Smoother movement when closer
+        self.x += (self.velocity.x + drift * 0.1) * time.dt * movement_scale
+        self.y += self.velocity.y * time.dt * 0.5 * movement_scale
+        self.z += (self.velocity.z + drift * 0.1) * time.dt * movement_scale
+        
+        # Pulsing size effect with distance-based intensity
+        pulse_intensity = max(0.3, min(1.0, 2.0 / dist_to_player))
+        pulse = math.sin(self.age * self.pulse_speed) * (self.pulse_magnitude * pulse_intensity) + 1
+        self.scale = self.base_scale * pulse
+        self.glow.scale = 1.5 + pulse * 0.2 * pulse_intensity  # Glow follows the pulse
+        
+        # Check distance from player
+        dist_to_player = (Vec3(self.x, self.y, self.z) - Vec3(player.x, player.y, player.z)).length()
+        max_distance = 20  # Maximum distance from player before forcing respawn
+        
+        # Force respawn if too far from player
+        if dist_to_player > max_distance:
+            self.respawn()
+            return
+            
+        # Fade out near end of lifetime
+        fade_start = 0.7  # Start fading at 70% of lifetime
+        if self.age / self.lifetime > fade_start:
+            fade_progress = (self.age / self.lifetime - fade_start) / (1 - fade_start)
+            alpha = 1 - fade_progress
+            # Update main particle color
+            self.color = color.rgba(200, 255, 180, int(alpha * self.base_alpha))
+            # Update glow effect
+            self.glow.alpha = 0.3 * self.glow_strength * alpha
+        else:
+            # Maintain normal appearance when not fading
+            self.color = self.base_color
+            self.glow.color = self.glow_color
+            self.glow.alpha = 0.3 * self.glow_strength
+        
+        # Ensure glow effect maintains proper scale relative to particle
+        self.glow.scale = Vec3(1.5, 1.5, 1.5)
+        
+        # Add slight rotation for more dynamic appearance
+        self.rotation_y += time.dt * random.uniform(-20, 20)
+        
+        # Reset particle when lifetime expires
+        if self.age >= self.lifetime:
+            self.respawn()
+    
+    def respawn(self):
+        # Calculate spawn position relative to current player position
+        angle = random.uniform(0, 6.28)
+        radius = random.uniform(5, 15)
+        
+        # Get player's current position for respawn
+        current_player_pos = Vec3(player.position)
+        
+        # Set new position around current player location
+        self.position = Vec3(
+            current_player_pos.x + math.cos(angle) * radius,
+            random.uniform(0.5, 3),
+            current_player_pos.z + math.sin(angle) * radius
+        )
+        
+        # Reset particle properties
+        self.age = 0
+        self.velocity = Vec3(
+            random.uniform(-0.5, 0.5),
+            random.uniform(0.2, 0.8),
+            random.uniform(-0.5, 0.5)
+        )
+        self.lifetime = random.uniform(5, 10)
+        
+        # Reset particle appearance
+        self.color = self.base_color
+        self.glow.color = self.glow_color
+        self.glow.alpha = 0.3 * self.glow_strength
+        
+        # Ensure glow effect is properly scaled and visible
+        self.glow.scale = Vec3(1.5, 1.5, 1.5)
+        self.glow.enabled = True
+        self.glow.visible = True
+        
+        # Add slight attraction towards player
+        direction_to_player = (current_player_pos - self.position).normalized()
+        self.velocity += direction_to_player * 0.2  # Slight bias towards player
+
+# Create particle pool and list to store them
+particles = []
+particle_count = 50  # Number of particles in the scene
+
 # Variables to track diagnostic mode
 diagnostic_mode = False
 prev_t_state = False
 
+# Ground state debounce variables
+ground_check_timer = 0
+ground_check_delay = 0.1  # Time in seconds to wait before allowing state change
+last_ground_state = True
+
 # Debug text for collision checking
 collision_debug = Text(
     text='No collision data',
-    position=(-0.5, 0.4),
+    position=(-0.85, -0.35),
     scale=1.2,
     origin=(0, 0),
     background=True,
     enabled=False  # Hidden by default
 )
 
-# # Create player (yellow circle blob)
-# player = Entity(
-#     model='sphere',
-#     color=color.yellow,
-#     scale=(0.5, 0.5, 0.5),
-#     position=(-30, 0.25, -30),
-#     collider='sphere'
-# )
+# Collision type indicator
+collision_type_text = Text(
+    text='Collision: None',
+    position=(-0.85, -0.40),
+    scale=1.2,
+    origin=(0, 0),
+    background=True,
+    enabled=False  # Hidden by default
+)
 
-# Character
+# Animation state indicator
+animation_debug_text = Text(
+    text='Animation: idle',
+    position=(-0.85, -0.45),
+    scale=1.2,
+    origin=(0, 0),
+    background=True,
+    enabled=False  # Hidden by default
+)
+
+# Create player with sprite sheet animation
 player = SpriteSheetAnimation(
     'character/chamove', 
     tileset_size=(7,9),
@@ -96,9 +342,49 @@ player = SpriteSheetAnimation(
         'jumpdownRight' : ((0, 1), (3, 1)),
         'jumpdownLeft' : ((0,9), (3,9))
     },
-    position=(-30, 0.25, -30),
-    scale=2.5
+    position=(12, 0.25, -32) ,
+    scale=1.5,
+    rotation_x=90  # Rotate to face down for top-down view
 )
+
+player.origin = (0, -0.15)
+
+# Initialize particle system
+for i in range(particle_count):
+    # Spawn particles around the starting area
+    angle = random.uniform(0, 6.28)
+    radius = random.uniform(2, 12)
+    particle = Particle(
+        position=(
+            player.x + math.cos(angle) * radius,
+            random.uniform(0.5, 3),
+            player.z + math.sin(angle) * radius
+        )
+    )
+    particles.append(particle)
+
+# Character movement variables
+speed = 5
+gravity = 0.7
+jump_speed = 25
+velocity_y = 0
+on_ground = True
+current_animation = 'idle'
+facePosition = 'right'
+
+# Jump cooldown
+can_jump = True
+jump_cooldown = 0.6
+jump_timer = 0
+
+# Dash variables
+is_dashing = False
+dash_speed = 12
+dash_duration = 0.25
+dash_timer = 0
+dash_cooldown = 1.0
+can_dash = True
+dash_cooldown_timer = 0
 
 # Position adjustment values
 x_offset = 27  # Decrease to move right, increase to move left
@@ -174,41 +460,153 @@ def update_coin_animation():
         blue_coin.animation_time = 0
 
 # Create camera positioned above the player for top-down view
-camera.position = (player.x, 50, player.z)
+camera.position = (0, 21, 0)  # Set default height to 21
 camera.rotation_x = 90
 
-# Movement settings
-move_speed = 5
-
-# Zoom settings
+# Zoom settings (only used in diagnostic mode)
 min_height = 5
-max_height = 100
+max_height = 1000
 zoom_speed = 2
 
 # Diagnostic view settings
 diagnostic_base_height = 5  # Lower default diagnostic view height
 diagnostic_min_zoom = 3
-diagnostic_max_zoom = 40  # Increased max zoom for more zoomed out view
+diagnostic_max_zoom = 1000  # Increased max zoom for more zoomed out view
 diagnostic_zoom = 25  # Starting with a more zoomed out view
 
-# Score display
-score = 0
+    # Score, lives and game state
+game_data = load_game_data()
+score = 0  # Mushroom coins collected in this level
+lives = game_data["lives"]
+is_game_over = False
+is_game_completed = False
 score_text = Text(
-    text='Mushroom Coins collected: 0',
+    text=f'Mushroom Coins collected: {score}',
     position=(-0.5, 0.45),
     scale=1.2,
     origin=(0, 0),
     background=True
 )
 
+lives_text = Text(
+    text='Lives: 3',
+    position=(-0.5, 0.40),
+    scale=1.2,
+    origin=(0, 0),
+    background=True
+)
+
+# Game Over screen elements
+game_over_panel = Entity(
+    model='quad',
+    color=color.black66,
+    scale=(2, 1),
+    position=(0, 0),
+    parent=camera.ui,
+    enabled=False
+)
+
+game_over_text = Text(
+    text='GAME OVER',
+    scale=4,
+    origin=(0, 0),
+    position=(0, 0.1),
+    color=color.red,
+    parent=camera.ui,
+    enabled=False
+)
+
+retry_button = Button(
+    text='Retry',
+    color=color.red,
+    scale=(0.2, 0.1),
+    position=(0, -0.1),
+    parent=camera.ui,
+    enabled=False
+)
+
+# Functions to handle navigation
+def go_to_marketplace():
+    import subprocess, sys, os
+    venv_python = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 
+                              'venv', 'Scripts', 'python.exe')
+    if not os.path.exists(venv_python):
+        venv_python = sys.executable
+    
+    subprocess.Popen([venv_python, 'marketplace.py'], 
+                    cwd=os.path.dirname(os.path.abspath(__file__)))
+    application.quit()
+    sys.exit()
+
+def go_to_main_menu():
+    import subprocess, sys, os
+    venv_python = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 
+                              'venv', 'Scripts', 'python.exe')
+    if not os.path.exists(venv_python):
+        venv_python = sys.executable
+    
+    subprocess.Popen([venv_python, 'main_menu.py'],
+                    cwd=os.path.dirname(os.path.abspath(__file__)))
+    application.quit()
+    sys.exit()
+
+# Success screen elements
+success_panel = Entity(
+    model='quad',
+    color=color.black66,
+    scale=(2, 1),
+    position=(0, 0),
+    parent=camera.ui,
+    enabled=False
+)
+
+success_text = Text(
+    text='SUCCESS!',
+    scale=4,
+    origin=(0, 0),
+    position=(0, 0.2),
+    color=color.green,
+    parent=camera.ui,
+    enabled=False
+)
+
+time_text = Text(
+    text='Time: 0:00',
+    scale=2,
+    origin=(0, 0),
+    position=(0, 0),
+    color=color.white,
+    parent=camera.ui,
+    enabled=False
+)
+
+marketplace_button = Button(
+    text='Go to Marketplace',
+    color=color.azure,
+    scale=(0.3, 0.1),
+    position=(-0.2, -0.2),
+    parent=camera.ui,
+    enabled=False
+)
+
+menu_button = Button(
+    text='Main Menu',
+    color=color.orange,
+    scale=(0.3, 0.1),
+    position=(0.2, -0.2),
+    parent=camera.ui,
+    enabled=False)# Store initial player position for respawn
+initial_player_position = Vec3(12, 0.25, -32)
+
 # Zoom level indicator
 zoom_indicator = Text(
     text=f'Height: {int(camera.y)}',
-    position=(0.7, 0.45),
-    scale=1.2,
+    position=(-0.85, -0.45),
+    scale=2,
+    color=color.white,
     origin=(0, 0),
     background=True,
-    enabled=False  # Hidden by default
+    enabled=False  # Hidden
 )
 
 def check_coin_collection(coin, player):
@@ -217,30 +615,131 @@ def check_coin_collection(coin, player):
     # If player is close enough to coin (within 1 unit)
     return distance < 1
 
-# Player element!
-player.rotation_x = 90 
-player.origin = (0,0)
-speed = 5
-gravity = 0.7
-jump_speed = 25
-velocity_y = 0
-on_ground = True
-current_animation = 'idle'
-facePosition = 'right'
+def check_collision(new_position):
+    """Check if new position would collide with a wall or trap"""
+    global lives
+    # Convert world position to UV coordinates
+    scale_x, _, scale_z = collision_ground.scale
+    tex_x = int((new_position.x / scale_x + 0.5) * collision_ground.texture.width)
+    tex_z = int((new_position.z / scale_z + 0.5) * collision_ground.texture.height)
+    
+    try:
+        # Get color at position from collision map
+        color = collision_ground.texture.get_pixel(tex_x, tex_z)
+        
+        # Debug color information
+        collision_debug.text = f'Pos: ({tex_x}, {tex_z}) Color: R:{int(color[0]*255)} G:{int(color[1]*255)} B:{int(color[2]*255)}'
+        
+        # Check if it's near the wall color (ED1C24 - red) with some tolerance
+        is_wall = (abs(color[0] - 237/255) < 0.1 and 
+                  abs(color[1] - 28/255) < 0.1 and 
+                  abs(color[2] - 36/255) < 0.1)
+        
+        # Check if it's near the trap color (22C722 - green) with some tolerance
+        is_trap = (abs(color[0] - 34/255) < 0.1 and 
+                  abs(color[1] - 199/255) < 0.1 and 
+                  abs(color[2] - 34/255) < 0.1)
+        
+        # Update collision type indicator
+        if is_wall:
+            collision_type_text.text = 'Collision: WALL (Red)'
+        elif is_trap:
+            collision_type_text.text = 'Collision: TRAP (Green)'
+        else:
+            collision_type_text.text = 'Collision: None (Safe)'
+        
+        return is_wall
+    except Exception as e:
+        collision_debug.text = f'Error: {str(e)}'
+        collision_type_text.text = 'Collision: ERROR'
+        return True  # Assume collision on error
+    except Exception as e:
+        collision_debug.text = f'Error: {str(e)}'
+        collision_type_text.text = 'Collision: ERROR'
+        return True  # Assume collision on error
 
-# --- jump cooldown ---
-can_jump = True
-jump_cooldown = 0.6
-jump_timer = 0
+def check_ground(position):
+    """Check if there's solid ground (only red walls or green traps)"""
+    # Convert world position to UV coordinates
+    scale_x, _, scale_z = collision_ground.scale
+    tex_x = int((position.x / scale_x + 0.5) * collision_ground.texture.width)
+    tex_z = int((position.z / scale_z + 0.5) * collision_ground.texture.height)
+    
+    try:
+        # Get color at position
+        color = collision_ground.texture.get_pixel(tex_x, tex_z)
+        
+        # Check specifically for red walls (ED1C24) with some tolerance
+        is_red_wall = (abs(color[0] - 237/255) < 0.1 and 
+                      abs(color[1] - 28/255) < 0.1 and 
+                      abs(color[2] - 36/255) < 0.1)
+        
+        # Check specifically for green traps (22C722) with some tolerance
+        is_green_trap = (abs(color[0] - 34/255) < 0.1 and 
+                        abs(color[1] - 199/255) < 0.1 and 
+                        abs(color[2] - 34/255) < 0.1)
+        
+        # Return True ONLY if we hit either red wall or green trap
+        return is_red_wall or is_green_trap
+        
+    except Exception as e:
+        print(f"Ground check error: {e}")
+        return False  # If there's an error, assume no ground
 
-# --- dash variables ---
-is_dashing = False
-dash_speed = 14
-dash_duration = 0.25
-dash_timer = 0
-dash_cooldown = 1.0
-can_dash = True
-dash_cooldown_timer = 0
+def check_trap_collision():
+    """Check if player is on a trap"""
+    global lives, is_game_over
+    # Don't check for traps if game is already over
+    if is_game_over:
+        return False
+
+    # Convert player position to UV coordinates
+    scale_x, _, scale_z = collision_ground.scale
+    tex_x = int((player.x / scale_x + 0.5) * collision_ground.texture.width)
+    tex_z = int((player.z / scale_z + 0.5) * collision_ground.texture.height)
+    
+    try:
+        # Get color at current position from collision map
+        color = collision_ground.texture.get_pixel(tex_x, tex_z)
+        
+        # Convert color values to 0-255 range for easier comparison
+        r = int(color[0] * 255)
+        g = int(color[1] * 255)
+        b = int(color[2] * 255)
+        
+        # Check if it's near the trap color (181, 230, 29) with some tolerance
+        is_trap = (abs(r - 181) < 20 and 
+                  abs(g - 230) < 20 and 
+                  abs(b - 29) < 20)
+        
+        if is_trap:
+            # Lose a life and respawn
+            lives -= 1
+            lives_text.text = f'Lives: {lives}'
+            
+            # Play damage sound
+            damage_sound.play()
+            
+            # Save game data with updated lives
+            game_data["lives"] = lives
+            game_data["score"] = calculate_score(game_data["mushrooms"], lives)
+            save_game_data(game_data)
+            
+            # Check if game over
+            if lives <= 0:
+                is_game_over = True
+                show_game_over()
+                return True
+                
+            # Reset position to initial spawn point
+            player.position = initial_player_position
+            # Reset velocity and animation state
+            return True
+            
+        return False
+    except Exception as e:
+        print(f"Trap check error: {e}")
+        return False
 
 def update():
     global current_animation, velocity_y, on_ground, facePosition
@@ -250,8 +749,21 @@ def update():
     squating = False
     #character value
     global score, diagnostic_mode, prev_t_state
+    global current_animation, velocity_y, on_ground, facePosition
+    global can_jump, jump_timer, is_dashing, dash_timer, can_dash, dash_cooldown_timer
+    
+    # Skip all updates if game is completed (except for animations)
+    if is_game_completed:
+        return
+        
     # Update coin animation
     update_coin_animation()
+    
+    # Check if player is on a trap
+    if check_trap_collision():
+        velocity_y = 0
+        on_ground = True
+        is_dashing = False
     
     # Toggle diagnostic mode when T is pressed (not held)
     if held_keys['t'] and not prev_t_state:
@@ -260,7 +772,12 @@ def update():
     
     # Update UI elements based on diagnostic mode
     collision_debug.enabled = diagnostic_mode
-    zoom_indicator.enabled = diagnostic_mode
+    collision_type_text.enabled = diagnostic_mode
+    animation_debug_text.enabled = diagnostic_mode
+    
+    # Always update collision info at current position for diagnostic display
+    if diagnostic_mode:
+        check_collision(player.position)
     
     # Update camera rotation in diagnostic mode
     if diagnostic_mode:
@@ -273,30 +790,31 @@ def update():
         red_coin.enabled = False
         score += 1
         score_text.text = f'Mushroom Coins collected: {score}'
+        mushroom_coin_sound.play()
         
     if green_coin.enabled and check_coin_collection(green_coin, player):
         green_coin.enabled = False
         score += 1
         score_text.text = f'Mushroom Coins collected: {score}'
+        mushroom_coin_sound.play()
         
     if blue_coin.enabled and check_coin_collection(blue_coin, player):
         blue_coin.enabled = False
         score += 1
         score_text.text = f'Mushroom Coins collected: {score}'
+        mushroom_coin_sound.play()
     
-    # # WASD movement for player
-    move_direction = Vec3(0, 0, 0)
+    # Check for game success (all 3 mushrooms collected)
+    if score == 3:
+        show_success()
     
-    # if held_keys['w']:
-    #     move_direction.z += 1
-    # if held_keys['s']:
-    #     move_direction.z -= 1
-    # if held_keys['a']:
-    #     move_direction.x -= 1
-    # if held_keys['d']:
-    #     move_direction.x += 1
+    moving = False
+    squating = False
+    
+    # Update animation debug BEFORE any animation changes
+    if diagnostic_mode:
+        animation_debug_text.text = f'Animation: {current_animation} | Moving: {moving} | OnGround: {on_ground} | Dashing: {is_dashing}'
 
-    # Character movement
     # --- update jump cooldown ---
     if not can_jump:
         jump_timer += time.dt
@@ -314,10 +832,17 @@ def update():
     # --- DASH movement ---
     if is_dashing:
         dash_timer += time.dt
+        move_amount = dash_speed * time.dt
+        
         if facePosition == 'right':
-            player.x += dash_speed * time.dt
+            new_pos = Vec3(player.x + move_amount, player.y, player.z)
         else:
-            player.x -= dash_speed * time.dt
+            new_pos = Vec3(player.x - move_amount, player.y, player.z)
+        
+        # Check collision before moving
+        if not check_collision(new_pos):
+            player.position = new_pos
+            
         if dash_timer >= dash_duration:
             is_dashing = False
             dash_timer = 0
@@ -331,40 +856,52 @@ def update():
 
     # --- Normal movement (only if not dashing) ---
     if not is_dashing:
+        # Right movement (D key)
         if held_keys['d'] and not held_keys['s']:
-            player.x += time.dt * speed
-            move_direction.x += 1
-            if current_animation != 'walkright' and current_animation != 'jumpright':
-                if on_ground:
-                    player.play_animation('walkright')
-                    current_animation = 'walkright'
-                    facePosition = 'right'
+            new_pos = Vec3(player.x + time.dt * speed, player.y, player.z)
+            if not check_collision(new_pos):
+                player.x = new_pos.x
+                if current_animation != 'walkright' and current_animation != 'jumpright':
+                    if on_ground:
+                        player.play_animation('walkright')
+                        current_animation = 'walkright'
+                        facePosition = 'right'
             moving = True
 
+        # Left movement (A key)
         elif held_keys['a'] and not held_keys['s']:
-            player.x -= time.dt * speed
-            move_direction.x -= 1
-            if current_animation != 'walkleft' and current_animation != 'jumpleft':
-                if on_ground:
-                    player.play_animation('walkleft')
-                    current_animation = 'walkleft'
-                    facePosition = 'left'
+            new_pos = Vec3(player.x - time.dt * speed, player.y, player.z)
+            if not check_collision(new_pos):
+                player.x = new_pos.x
+                if current_animation != 'walkleft' and current_animation != 'jumpleft':
+                    if on_ground:
+                        player.play_animation('walkleft')
+                        current_animation = 'walkleft'
+                        facePosition = 'left'
             moving = True
 
-        # --- Jump ---
-        if held_keys['space'] and on_ground and can_jump:
-            can_jump = False
-            velocity_y = jump_speed
-            on_ground = False
+        # Forward movement (W key)
+        if held_keys['w'] and not held_keys['s']:
+            new_pos = Vec3(player.x, player.y, player.z + time.dt * speed)
+            if not check_collision(new_pos):
+                player.z = new_pos.z
+            moving = True
+
+        # Backward movement (S key) - only when on ground
+        if held_keys['s'] and on_ground:
+            new_pos = Vec3(player.x, player.y, player.z - time.dt * speed)
+            if not check_collision(new_pos):
+                player.z = new_pos.z
             if facePosition == 'right':
-                player.play_animation('jumpright')
-                current_animation = 'jumpright'
+                player.play_animation('downright')
+                current_animation = 'downright'
             else:
-                player.play_animation('jumpleft')
-                current_animation = 'jumpleft'
+                player.play_animation('downleft')
+                current_animation = 'downleft'
             moving = True
+            squating = True
 
-        # --- added jumpdown feature ---
+        # --- jumpdown feature ---
         if held_keys['s'] and not on_ground and velocity_y > -5:
             # faster fall when pressing S in air
             velocity_y = -20  # strong downward speed
@@ -387,16 +924,6 @@ def update():
                 player.play_animation('dashleft')
                 current_animation = 'dashleft'
 
-        if held_keys['s'] and on_ground and not is_dashing:
-            if facePosition == 'right':
-                player.play_animation('downright')
-                current_animation = 'downright'
-            else:
-                player.play_animation('downleft')
-                current_animation = 'downleft'
-            moving = True
-            squating = True
-
     if on_ground and not current_animation.startswith('walk') and not current_animation.startswith('down') and not current_animation.startswith('dash'):
         if facePosition == 'right':
             player.play_animation('idle')
@@ -409,10 +936,49 @@ def update():
     if not on_ground:
         velocity_y -= gravity
         player.y += velocity_y * time.dt
-        if player.y <= 0:
-            player.y = 0
+        
+        # Check if player has landed on ground
+        if check_ground(player.position):
+            player.y = 0.25
             velocity_y = 0
             on_ground = True
+            # Reset to idle animation when landing
+            if facePosition == 'right':
+                player.play_animation('idle')
+                current_animation = 'idle'
+            else:
+                player.play_animation('idleLeft')
+                current_animation = 'idleLeft'
+        elif player.y <= 0.25:
+            # Fallback if player goes too low
+            player.y = 0.25
+            velocity_y = 0
+            on_ground = True
+    else:
+        # Ground state check with debounce
+        global ground_check_timer, last_ground_state
+        ground_check_timer += time.dt
+        
+        # Only check ground state after delay
+        if ground_check_timer >= ground_check_delay:
+            check_pos = player.position
+            current_ground_check = check_ground(check_pos)
+            
+            # Only update state if it's been stable
+            if current_ground_check != last_ground_state:
+                ground_check_timer = 0  # Reset timer
+                last_ground_state = current_ground_check
+                
+                if not current_ground_check:
+                    on_ground = False
+                    if facePosition == 'right':
+                        player.play_animation('jumpright')
+                        current_animation = 'jumpright'
+                    else:
+                        player.play_animation('jumpleft')
+                        current_animation = 'jumpleft'
+                else:
+                    on_ground = True
 
     # --- Idle ---
     if on_ground and not moving and not is_dashing and current_animation != 'idle':
@@ -422,39 +988,6 @@ def update():
         else:
             player.play_animation('idleLeft')
             current_animation = 'idleLeft'
-
-
-    
-    # Normalize and calculate new position
-    if move_direction.length() > 0:
-        move_direction = move_direction.normalized()
-        new_position = player.position + move_direction * move_speed * time.dt
-        
-        # Convert world position to UV coordinates
-        scale_x, _, scale_z = collision_ground.scale
-        # Adjust the conversion to match texture coordinates
-        tex_x = int((new_position.x / scale_x + 0.5) * collision_ground.texture.width)
-        tex_z = int((new_position.z / scale_z + 0.5) * collision_ground.texture.height)
-        
-        # Check if the new position would hit a wall (red color: #ED1C24)
-        try:
-            # Get color at position
-            color = collision_ground.texture.get_pixel(tex_x, tex_z)
-            
-            # Debug color information
-            collision_debug.text = f'Pos: ({tex_x}, {tex_z}) Color: R:{int(color[0]*255)} G:{int(color[1]*255)} B:{int(color[2]*255)}'
-            
-            # Check if it's near the wall color (ED1C24) with some tolerance
-            is_wall = (abs(color[0] - 237/255) < 0.1 and 
-                      abs(color[1] - 28/255) < 0.1 and 
-                      abs(color[2] - 36/255) < 0.1)
-            
-            if not is_wall:
-                player.position = new_position
-        except Exception as e:
-            collision_debug.text = f'Error: {str(e)}'
-            # If we can't get the pixel color (out of bounds), don't move
-            pass
     
     # Camera follows player with offset in diagnostic mode
     if diagnostic_mode:
@@ -468,22 +1001,16 @@ def update():
             diagnostic_zoom = clamp(diagnostic_zoom, diagnostic_min_zoom, diagnostic_max_zoom)
             
         # Calculate camera position with dynamic offset based on zoom
-        camera_offset = -(diagnostic_zoom * 0.25)  # Further reduced offset scale
+        camera_offset = -(diagnostic_zoom * 0.25)
         
         camera.position = (
             player.x, 
-            player.y + (diagnostic_zoom * 0.3),  # Further reduced height multiplier
+            player.y + (diagnostic_zoom * 0.3),
             player.z + camera_offset
         )
     else:
-        # Normal mode camera and zoom
-        if held_keys['q']:
-            camera.y += zoom_speed * time.dt * 10
-            camera.y = clamp(camera.y, min_height, max_height)
-        if held_keys['e']:
-            camera.y -= zoom_speed * time.dt * 10
-            camera.y = clamp(camera.y, min_height, max_height)
-        camera.position = (player.x, camera.y, player.z)
+        # Normal mode - fixed camera height at 21
+        camera.position = (player.x, 21, player.z + 2)  # Added offset to z to see more of the terrain ahead
     
     # Update zoom indicator
     zoom_indicator.text = f'Height: {int(camera.y)}'
@@ -496,18 +1023,99 @@ def input(key):
     # Zoom with scroll wheel
     if diagnostic_mode:
         if key == 'scroll up':
-            diagnostic_zoom -= zoom_speed * 4  # Increased scroll sensitivity
+            diagnostic_zoom -= zoom_speed * 4
             diagnostic_zoom = clamp(diagnostic_zoom, diagnostic_min_zoom, diagnostic_max_zoom)
         if key == 'scroll down':
-            diagnostic_zoom += zoom_speed * 4  # Increased scroll sensitivity
+            diagnostic_zoom += zoom_speed * 4
             diagnostic_zoom = clamp(diagnostic_zoom, diagnostic_min_zoom, diagnostic_max_zoom)
     else:
-        if key == 'scroll up':
-            camera.y -= zoom_speed
-            camera.y = clamp(camera.y, min_height, max_height)
-        if key == 'scroll down':
-            camera.y += zoom_speed
-            camera.y = clamp(camera.y, min_height, max_height)
+        # No zoom controls in normal mode
+        pass
+
+# Function to show success screen
+def show_success():
+    global total_time, is_game_completed, game_data
+    if not is_game_completed:  # Only calculate time and show screen if not already completed
+        is_game_completed = True
+        total_time = int(time.time() - start_time)
+        minutes = total_time // 60
+        seconds = total_time % 60
+        
+        # Update game data
+        game_data["mushrooms"] += score  # Add collected mushrooms
+        game_data["lives"] = lives  # Update remaining lives
+        game_data["score"] = calculate_score(game_data["mushrooms"], lives)  # Update total score
+        if 2 not in game_data["unlocked_levels"]:
+            game_data["unlocked_levels"].append(2)  # Unlock level 2
+        save_game_data(game_data)
+        
+        success_panel.enabled = True
+        success_text.enabled = True
+        time_text.enabled = True
+        marketplace_button.enabled = True
+        menu_button.enabled = True
+        time_text.text = f'Time: {minutes}:{seconds:02d}'
+        # Disable player movement
+        player.enabled = False
+        # Play success sound
+        success_sound.play()
+
+# Function to show game over screen
+def show_game_over():
+    global game_data
+    game_over_panel.enabled = True
+    # Update and save game data
+    game_data["lives"] = lives
+    game_data["score"] = calculate_score(game_data["mushrooms"], lives)
+    save_game_data(game_data)
+    game_over_text.enabled = True
+    retry_button.enabled = True
+    # Disable player movement
+    player.enabled = False
+    # Play game over sound
+    gameover_sound.play()
+
+def reset_game():
+    global lives, score, is_game_over, is_game_completed, start_time, game_data
+    # Reload game data to get current lives
+    game_data = load_game_data()
+    # Reset game state
+    lives = game_data["lives"]
+    score = 0  # Reset mushrooms collected in this level
+    is_game_over = False
+    is_game_completed = False
+    start_time = time.time()
+    lives_text.text = f'Lives: {lives}'
+    score_text.text = f'Mushroom Coins collected: {score}'
+    
+    # Reset player
+    player.enabled = True
+    player.position = initial_player_position
+    
+    # Reset coins if they were collected
+    red_coin.enabled = True
+    green_coin.enabled = True
+    blue_coin.enabled = True
+    
+    # Hide game over screen
+    game_over_panel.enabled = False
+    game_over_text.enabled = False
+    retry_button.enabled = False
+    
+    # Hide success screen
+    success_panel.enabled = False
+    success_text.enabled = False
+    time_text.enabled = False
+    marketplace_button.enabled = False
+    menu_button.enabled = False
+
+# Set up button click handlers
+retry_button.on_click = reset_game
+marketplace_button.on_click = go_to_marketplace
+menu_button.on_click = go_to_main_menu
+
+# Initialize start time for the game timer
+start_time = time.time()
 
 # Add ambient light for better visibility
 AmbientLight(color=color.rgba(255, 255, 255, 0.5))

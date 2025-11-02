@@ -7,17 +7,9 @@ import json
 from level2.goal import walking_frames_right, hit_frames_right
 from level2.particles import SporeParticle, FireworkParticle
 from level2.ui import ScorePopup, draw_minimap
-from level2.collision import build_collision_grid, check_collision
-from level2.camera import update_camera, ease_in_out_cubic
-from level2.powerups import (load_inventory, save_inventory, load_powerup_images, 
-                           activate_powerup, update_powerup_timers, get_powerup_effects,
-                           draw_powerup_ui, POWERUP_INFO)
-from level2.level_state import reset_level, handle_transport_sequence, update_transport
 import charactermove as char_move
-
 # Initialize Pygame
 pygame.init()
-
 # Initialize audio mixer (safe if system doesn't have audio — catch failures)
 try:
     # try to reduce latency on some systems then init mixer
@@ -32,7 +24,6 @@ try:
 except Exception:
     # audio not available — continue silently
     pass
-
 # Load optional SFX (missing files won't crash the game)
 bubble_pop = None
 scored_sound = None
@@ -53,16 +44,13 @@ try:
             scored_sound = None
 except Exception:
     bubble_pop = scored_sound = None
-
 # Create a dummy display mode first to allow image loading (fixes "No video mode" error)
 dummy_screen = pygame.display.set_mode((1, 1), pygame.NOFRAME)
-
 # Try loading character assets (safe if assets missing)
 try:
     char_move.load_assets()
 except Exception:
     pass
-
 # Constants
 SCREEN_WIDTH = 1024  # Fixed screen size for viewing
 SCREEN_HEIGHT = 768
@@ -88,77 +76,80 @@ FIREWORK_COLORS = [(255, 40, 40), (255, 80, 60), (200, 30, 30), (255, 100, 80)]
 SCREEN_SHAKE_FRAMES = 12  # frames of camera shake when hit
 screen_shake_timer = 0
 SHOW_HIT_DEBUG = False  # This flag is no longer needed; removing it.
-
 # Aura settings
 AURA_RADIUS = 150  # world units radius of the aura around the player
-
 # Rolling / squish animation settings for the sporeball
 ROLL_VELOCITY_THRESHOLD = 1.2  # start roll animation when speed exceeds this
 ROLL_FRAME_SPEED = 0.5  # how quickly to advance roll frames
 SQUISH_FRAMES = 4  # number of keyframes for squash/stretch
 SQUISH_DURATION = 10  # frames that the squish animation plays
-
 # Trail / motion blur for ball
 BALL_TRAIL_MAX = 12  # max trail copies kept
 BALL_TRAIL_ALPHA = 160  # max alpha for the newest trail copy
 BALL_TRAIL_SCALE_DECAY = 0.95  # each older trail image is this scale of the next
-
 # Paths to your files (update if needed)
 MAP_PATH = 'assets/textures/map/Level_2_map.png'
 COLLISION_PATH = 'assets/textures/map/Level_2_collision.png'
-
+# ---------------- Inventory helpers & powerup config ----------------
+def load_inventory():
+    try:
+        with open('inventory.json', 'r') as f:
+            return json.load(f)
+    except FileNotFoundError:
+        return {}
+def save_inventory(inv):
+    try:
+        with open('inventory.json', 'w') as f:
+            json.dump(inv, f)
+    except Exception:
+        pass
+# Mapping of powerup keys to asset icons and display names
+POWERUP_INFO = {
+    'velocity_vial': {'img': 'speed1.png', 'name': 'Velocity Vial'},
+    'golden_gleam': {'img': 'gold1.png', 'name': 'Golden Gleam'},
+    'cluster_cap': {'img': 'magnet1.png', 'name': 'Cluster Cap'},
+    'aura_alembic': {'img': 'circle1.png', 'name': 'Aura Alembic'},
+}
 # Powerup runtime state (timers measured in frames)
 POWERUP_DURATION_FRAMES = int(6 * FPS)  # 6 seconds
 powerup_timers = {k: 0 for k in POWERUP_INFO.keys()}  # active effect timers
-
 # Allow per-powerup duration overrides (frames). Keep default at 6s above.
 POWERUP_DURATIONS = {
     'velocity_vial': int(10 * FPS),  # velocity lasts 10 seconds
 }
-
 # Temporary goals spawned by cluster_cap
 temp_goal_timers = {}
-
 # Full-screen cluster overlay timer (frames)
 cluster_overlay_timer = 0
-
 # shoot speed multiplier used when velocity active
 shoot_speed_multiplier = 1.0
-
 # player movement speed multiplier (1.0 = normal)
 player_speed_multiplier = 1.0
-
 # score multiplier when golden is active
 score_multiplier_active = 1
-
 # aura active flag handled via timer
-
+# cluster cap spawns extra goals immediately when used; timer kept for visual UI
 # Transport sequence state: when all goals are completed we teleport the player
 # to a start position then smoothly move them up a tunnel (Y descends) over
 # TRANSPORT_DURATION_MS milliseconds. While transporting, input & shooting are
 # disabled and a small "Transporting..." message is shown.
 transporting = False
 transport_start_ticks = 0
-TRANSPORT_DURATION_MS = int(6 * 1000)
+TRANSPORT_DURATION_MS = int(3 * 1000)
 TRANSPORT_START_POS = (5200.0, 4400.0)
 TRANSPORT_END_POS = (5200.0, 860.0)
-
 # Level flow states
 level_cleared = False
 level_cleared_start = 0
 LEVEL_CLEARED_DISPLAY_MS = 1500
-
 # New: level-failed state (when health hits zero)
 level_failed = False
 level_failed_start = 0
 LEVEL_FAILED_DISPLAY_MS = 1500
-
 # After transport ends player can explore
 post_transport = False
-
 # Load persisted inventory
 inventory = load_inventory()
-
 # Load images (now safe after dummy display)
 try:
     map_image = pygame.image.load(MAP_PATH)
@@ -168,7 +159,6 @@ try:
     collision_surface = collision_surface.convert_alpha()
 except pygame.error as e:
     sys.exit(1)
-
 # Load goal animation frames from level2 (do this after a video mode is set)
 try:
     import level2.goal as goal_module
@@ -178,7 +168,6 @@ try:
         print("Warning: failed to load level2 goal assets:", e)
 except Exception:
     goal_module = None
-
 # Load ball animation frames from level2.hit
 try:
     import level2.hit as hit_module
@@ -191,55 +180,83 @@ try:
 except Exception:
     hit_module = None
     ball_frames = []
-
 # Sound played when chest is first opened
 drop_sound = None
 try:
     drop_sound = pygame.mixer.Sound('assets/sounds/drop.mp3')
 except Exception:
     drop_sound = None
-
-# Tunnel transport sound
+# Tunnel transport sound: try several common extensions and fall back to the
+# music channel if needed. Support both pygame.mixer.Sound and pygame.mixer.music
+# so we can handle formats the Sound loader doesn't support.
 tunnel_sound = None
 tunnel_is_music = False
 def _load_tunnel_sound():
     global tunnel_sound, tunnel_is_music
     candidates = [
         'assets/sounds/tunnel.mp3',
+        'assets/sounds/tunnel.ogg',
+        'assets/sounds/tunnel.wav',
         'assets/sounds/tunnel1.mp3',
     ]
     for path in candidates:
         if not os.path.exists(path):
             continue
+        # First try to load as a Sound (small files)
         try:
             s = pygame.mixer.Sound(path)
             tunnel_sound = s
             tunnel_is_music = False
             return
         except Exception:
+            # If Sound can't load, try loading into the music channel
             try:
                 pygame.mixer.music.load(path)
                 tunnel_sound = path
                 tunnel_is_music = True
                 return
             except Exception:
+                # Not loadable; try next candidate
                 continue
+    # If nothing worked, keep tunnel_sound = None
 _load_tunnel_sound()
-
 # World dimensions from map
 WORLD_WIDTH = map_image.get_width()
 WORLD_HEIGHT = map_image.get_height()
-
-# Build collision grid
-collision_grid, _COLLISION_CELL, _collision_grid_w, _collision_grid_h = build_collision_grid(
-    collision_surface, WORLD_WIDTH, WORLD_HEIGHT, COLLISION_COLOR, TOLERANCE
-)
-
+# --- Performance: build a coarse collision grid once to avoid frequent get_at() scans ---
+# Cell size controls precision vs. speed; 8 is a good tradeoff on large maps.
+_COLLISION_CELL = 8
+_collision_grid_w = (WORLD_WIDTH + _COLLISION_CELL - 1) // _COLLISION_CELL
+_collision_grid_h = (WORLD_HEIGHT + _COLLISION_CELL - 1) // _COLLISION_CELL
+# bytearray for compactness: 0 = empty, 1 = any red-like pixel present in the cell
+collision_grid = bytearray(_collision_grid_w * _collision_grid_h)
+# scan each cell once at startup (sample every 2 pixels inside the cell for speed)
+_sample_step = 2
+for cy in range(_collision_grid_h):
+    y0 = cy * _COLLISION_CELL
+    y1 = min(WORLD_HEIGHT, y0 + _COLLISION_CELL)
+    for cx in range(_collision_grid_w):
+        x0 = cx * _COLLISION_CELL
+        x1 = min(WORLD_WIDTH, x0 + _COLLISION_CELL)
+        marked = 0
+        for yy in range(y0, y1, _sample_step):
+            found = False
+            for xx in range(x0, x1, _sample_step):
+                pixel = collision_surface.get_at((xx, yy))
+                if (abs(pixel[0] - COLLISION_COLOR[0]) < TOLERANCE and
+                    abs(pixel[1] - COLLISION_COLOR[1]) < TOLERANCE and
+                    abs(pixel[2] - COLLISION_COLOR[2]) < TOLERANCE and
+                    pixel[3] > 0):
+                    marked = 1
+                    found = True
+                    break
+            if found:
+                break
+        collision_grid[cy * _collision_grid_w + cx] = marked
 # Now set real screen
 screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
 pygame.display.set_caption("Level 2: Sporeball Gauntlet - Goals Only Below y=4215!")
 clock = pygame.time.Clock()
-
 # Precreate full-screen overlay surfaces to avoid allocating new surfaces each frame.
 _cluster_overlay_base = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
 _cluster_overlay_base.fill((60, 200, 80, 255))
@@ -247,14 +264,21 @@ _gold_overlay_base = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALP
 _gold_overlay_base.fill((255, 220, 100, 255))
 _velocity_overlay_base = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
 _velocity_overlay_base.fill((100, 150, 255, 255))
-
-# Load powerup images
-powerup_images = load_powerup_images()
-
+# Load small icon images for powerups (used in bottom-left UI)
+powerup_images = {}
+for key, info in POWERUP_INFO.items():
+    path = f"assets/characters/{info['img']}"
+    try:
+        surf = pygame.image.load(path).convert_alpha()
+        # scale to a consistent icon size
+        surf = pygame.transform.smoothscale(surf, (48, 48))
+    except Exception:
+        surf = pygame.Surface((48, 48), pygame.SRCALPHA)
+        surf.fill((100, 100, 100, 200))
+    powerup_images[key] = surf
 # Player setup in WORLD coordinates (start near ball for convenience)
 player_pos = [730.0, 8230.0]  # Near ball start
 player_radius = 20  # Simple circle for testing
-
 # Instantiate character sprite for on-screen player (rendered at screen center)
 try:
     character_sprite = char_move.Player(pos=(SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2 + player_radius))
@@ -262,18 +286,14 @@ try:
 except Exception:
     character_sprite = None
     character_group = pygame.sprite.Group()
-
 # Lock flag to prevent player movement after level completion/transport
 player_locked = False
-
 # Player health
 player_max_health = 100
 player_health = player_max_health
-
 # Frames of temporary invulnerability after taking a bubble hit
 HIT_COOLDOWN_FRAMES = int(0.8 * FPS)
 player_hit_cooldown = 0
-
 # Chest setup (placed in post-transport area)
 CHEST_POS = (5800.0, 895.0)
 CHEST_RADIUS = 48
@@ -288,10 +308,8 @@ except Exception:
     chest_open_img = pygame.Surface((64, 48), pygame.SRCALPHA)
     pygame.draw.rect(chest_open_img, (200,180,80), chest_open_img.get_rect())
 chest_opened = False
-
 # Track previous chest state so we only play the open sound once on transition
 prev_chest_opened = False
-
 # Piles to decorate the post-transport area
 PILE_POSITIONS = [(5780.0, 905.0), (5840.0, 905.0)]
 try:
@@ -299,23 +317,18 @@ try:
 except Exception:
     pile_img = pygame.Surface((48, 32), pygame.SRCALPHA)
     pygame.draw.ellipse(pile_img, (120, 90, 60), pile_img.get_rect())
-
 # Camera setup (follows player, keeps player centered)
 cam_x = player_pos[0] - SCREEN_WIDTH // 2
 cam_y = player_pos[1] - SCREEN_HEIGHT // 2
 cam_target_x, cam_target_y = cam_x, cam_y  # For lerping to ball
-
 # Scoring
 score = 0
 streak = 0  # For combo (one strike = double next score)
-
 # Use the ScorePopup from `level2.ui` (imported at top) so drawing can take a font
 popups = []  # List of active pop-ups
 particles = pygame.sprite.Group()
-
 # simple timer used to animate goal sprite glow/frames
 goal_timer = 0
-
 # --- enemy projectiles (goal bubbles) ---
 class GoalBubble(pygame.sprite.Sprite):
     """Small bubble shot by goals toward the player/ball."""
@@ -334,7 +347,6 @@ class GoalBubble(pygame.sprite.Sprite):
         pygame.draw.circle(surf, (255, 255, 255, 120), (self.radius-1, self.radius-1), max(1, self.radius//3))
         self.image = surf
         self.rect = surf.get_rect()
-
     def update(self):
         # Move
         self.world_x += self.vx
@@ -343,13 +355,11 @@ class GoalBubble(pygame.sprite.Sprite):
         if self.lifetime <= 0:
             self.kill()
             return
-
         # Destroy if out of world bounds (cheap early-out)
         if (self.world_x < -100 or self.world_x > WORLD_WIDTH + 100 or
             self.world_y < -100 or self.world_y > WORLD_HEIGHT + 100):
             self.kill()
             return
-
         # collision with player (simple circle)
         try:
             dx = self.world_x - player_pos[0]
@@ -387,7 +397,6 @@ class GoalBubble(pygame.sprite.Sprite):
                 return
         except Exception:
             pass
-
         # collision with mushroom ball (pop)
         try:
             if mushroom_ball and getattr(mushroom_ball, 'pos', None):
@@ -413,7 +422,6 @@ class GoalBubble(pygame.sprite.Sprite):
                     return
         except Exception:
             pass
-
     def draw(self, surf, cam_x, cam_y):
         try:
             screen_x = int(self.world_x - cam_x - self.image.get_width() // 2)
@@ -421,10 +429,8 @@ class GoalBubble(pygame.sprite.Sprite):
             surf.blit(self.image, (screen_x, screen_y))
         except Exception:
             pass
-
 # Group for active goal bubbles
 enemy_projectiles = pygame.sprite.Group()
-
 # Mushroom Ball moved to level2.ball (parameterized to avoid circular imports)
 from level2.ball import MushroomBall
 from level2.goals import GoalSprite, generate_goals, goals, goal_sprites, goal_sprite_map, pop_goals_hit_by_point, pop_goals_in_radius
@@ -469,10 +475,13 @@ def check_goal_hit(ball_pos, ball_radius):
     return True
 
 def aura_collect():
-    """Auto-collect goals that are within AURA_RADIUS of the player."""
-    # include level_cleared vars so the function can start the transport
-    # sequence when the aura removes the last goal
-    global score, streak, screen_shake_timer, level_cleared, level_cleared_start
+    """Auto-collect goals that are within AURA_RADIUS of the player.
+    This function removes goals, spawns particles/fireworks, awards points, and
+    schedules popups similar to check_goal_hit.
+    """
+    # Delegate goal removal to level2.goals and then perform the same
+    # scoring/particle/popup effects that `check_goal_hit` does.
+    global score, streak, screen_shake_timer
     # Remove goals within the aura radius and get the removed coords
     removed = pop_goals_in_radius(player_pos, AURA_RADIUS, GOAL_RADIUS)
     if not removed:
@@ -519,41 +528,106 @@ def aura_collect():
         pass
 
     return True
-
-# Placeholder for the mushroom ball instance
+# Placeholder for the mushroom ball instance. The real instance is created
+# after the collision helper is defined so we can pass it as a callback.
 mushroom_ball = None
+def update_camera():
+    """Update camera to center on player, but lerp toward ball if active."""
+    global cam_x, cam_y, cam_target_x, cam_target_y
+    global screen_shake_timer
+    # Target: Midpoint between player and ball if active
+    # Guard against mushroom_ball being None during early init
+    if mushroom_ball and getattr(mushroom_ball, 'active', False):
+        mid_x = (player_pos[0] + mushroom_ball.pos[0]) / 2
+        mid_y = (player_pos[1] + mushroom_ball.pos[1]) / 2
+        cam_target_x = mid_x - SCREEN_WIDTH // 2
+        cam_target_y = mid_y - SCREEN_HEIGHT // 2
+    else:
+        cam_target_x = player_pos[0] - SCREEN_WIDTH // 2
+        cam_target_y = player_pos[1] - SCREEN_HEIGHT // 2
+    
+    # Lerp camera (smooth follow)
+    lerp_speed = 0.1
+    cam_x += (cam_target_x - cam_x) * lerp_speed
+    cam_y += (cam_target_y - cam_y) * lerp_speed
+    
+    # Clamp camera so edges don't show outside world
+    cam_x = max(0, min(cam_x, WORLD_WIDTH - SCREEN_WIDTH))
+    cam_y = max(0, min(cam_y, WORLD_HEIGHT - SCREEN_HEIGHT))
+    # Apply screen shake if active
+    if screen_shake_timer and screen_shake_timer > 0:
+        # Shake magnitude fades with timer
+        frac = screen_shake_timer / float(max(1, SCREEN_SHAKE_FRAMES))
+        shake_amount = 6 * frac
+        sx = random.uniform(-shake_amount, shake_amount)
+        sy = random.uniform(-shake_amount, shake_amount)
+        cam_x += sx
+        cam_y += sy
+        screen_shake_timer -= 1
 
-# Collision check function that uses the refactored collision system
-def check_collision_wrapper(world_x, world_y, radius):
-    """Wrapper for the refactored collision check function."""
-    return check_collision(world_x, world_y, radius, collision_surface, collision_grid,
-                          _COLLISION_CELL, _collision_grid_w, _collision_grid_h,
-                          WORLD_WIDTH, WORLD_HEIGHT, COLLISION_COLOR, TOLERANCE)
-
+def ease_in_out_cubic(t: float) -> float:
+    """Smooth cubic ease-in/out. t in [0,1]."""
+    if t < 0.5:
+        return 4 * t * t * t
+    else:
+        return 1 - pow(-2 * t + 2, 3) / 2
+# The minimap drawing is handled by level2.ui.draw_minimap which is imported
+# at module top. The original in-file implementation was removed to avoid
+# shadowing the cleaner, parameterized helper in `level2.ui`.
+def check_collision(world_x, world_y, radius):
+    """
+    Check if position overlaps red pixels in collision map.
+    Uses a precomputed coarse collision_grid to avoid scanning every pixel each frame.
+    """
+    # Convert circle bounds to collision-grid cell indices
+    min_cx = max(0, int((world_x - radius) // _COLLISION_CELL))
+    max_cx = min(_collision_grid_w - 1, int((world_x + radius) // _COLLISION_CELL))
+    min_cy = max(0, int((world_y - radius) // _COLLISION_CELL))
+    max_cy = min(_collision_grid_h - 1, int((world_y + radius) // _COLLISION_CELL))
+    # small step for precise check inside marked cells (keeps checks low)
+    step = 2
+    for cy in range(min_cy, max_cy + 1):
+        base_row = cy * _collision_grid_w
+        for cx in range(min_cx, max_cx + 1):
+            if collision_grid[base_row + cx] == 0:
+                continue  # this cell has no red-like pixels (fast skip)
+            # cell may contain collision — do a precise but sparse scan restricted to the intersection
+            cell_x0 = cx * _COLLISION_CELL
+            cell_y0 = cy * _COLLISION_CELL
+            x0 = max(int(world_x - radius), cell_x0)
+            x1 = min(int(world_x + radius), min(cell_x0 + _COLLISION_CELL - 1, WORLD_WIDTH - 1))
+            y0 = max(int(world_y - radius), cell_y0)
+            y1 = min(int(world_y + radius), min(cell_y0 + _COLLISION_CELL - 1, WORLD_HEIGHT - 1))
+            for px in range(x0, x1 + 1, step):
+                for py in range(y0, y1 + 1, step):
+                    if (px - world_x) ** 2 + (py - world_y) ** 2 > radius * radius:
+                        continue
+                    pixel = collision_surface.get_at((px, py))
+                    if (abs(pixel[0] - COLLISION_COLOR[0]) < TOLERANCE and
+                        abs(pixel[1] - COLLISION_COLOR[1]) < TOLERANCE and
+                        abs(pixel[2] - COLLISION_COLOR[2]) < TOLERANCE and
+                        pixel[3] > 0):
+                        return True
+    return False
 # Ensure starting position is safe (move if on wall)
-if check_collision_wrapper(player_pos[0], player_pos[1], player_radius):
+if check_collision(player_pos[0], player_pos[1], player_radius):
     player_pos[0] = 50.0
     player_pos[1] = 50.0
-    while check_collision_wrapper(player_pos[0], player_pos[1], player_radius) and player_pos[0] < WORLD_WIDTH - 100:
+    while check_collision(player_pos[0], player_pos[1], player_radius) and player_pos[0] < WORLD_WIDTH - 100:
         player_pos[0] += 50
         player_pos[1] += 50
-
 # Generate goals SCATTERED ACROSS MAP (before user moves, only y > 4215)
-generate_goals(WORLD_WIDTH, WORLD_HEIGHT, FORBIDDEN_Y_MAX, NUM_GOALS, check_collision_wrapper, goal_radius=GOAL_RADIUS, sprite_scale=1.8)
-
-# Update camera initially
-cam_x, cam_y, screen_shake_timer = update_camera(player_pos, mushroom_ball, cam_x, cam_y,
-                                                SCREEN_WIDTH, SCREEN_HEIGHT, WORLD_WIDTH,
-                                                WORLD_HEIGHT, screen_shake_timer, 
-                                                SCREEN_SHAKE_FRAMES)
-
-# Instantiate the mushroom ball now that helper functions are defined
+generate_goals(WORLD_WIDTH, WORLD_HEIGHT, FORBIDDEN_Y_MAX, NUM_GOALS, check_collision, goal_radius=GOAL_RADIUS, sprite_scale=1.8)
+update_camera()  # Initial cam
+# Instantiate the mushroom ball now that helper functions (like check_collision)
+# and world sizes are defined. We used a placeholder above so this assignment
+# can override it after the definitions are available.
 mushroom_ball = MushroomBall(
     initial_pos=[730.0, 8230.0],
     radius=15,
     frames=ball_frames,
     get_shoot_speed_multiplier=lambda: shoot_speed_multiplier,
-    check_collision_fn=check_collision_wrapper,
+    check_collision_fn=check_collision,
     BALL_SPEED=BALL_SPEED,
     BALL_FRICTION=BALL_FRICTION,
     MUSHROOM_ANIM_SCALE=MUSHROOM_ANIM_SCALE,
@@ -565,17 +639,96 @@ mushroom_ball = MushroomBall(
     WORLD_WIDTH=WORLD_WIDTH,
     WORLD_HEIGHT=WORLD_HEIGHT,
 )
-
 # small timer (frames) used to delay auto-return after a hit (set when a shot hits)
 mushroom_ball.return_timer = 0
 
+# --- NEW: reset_level helper (keeps player in this level, does NOT quit to menu) ---
+def reset_level():
+    global player_pos, player_health, score, streak
+    global particles, enemy_projectiles, popups
+    global powerup_timers, temp_goal_timers, cluster_overlay_timer
+    global goals, goal_sprites, goal_sprite_map
+    global level_cleared, transporting, post_transport, player_locked
+    global chest_opened, prev_chest_opened, level_failed, level_failed_start
+    global mushroom_ball, player_speed_multiplier, shoot_speed_multiplier
+
+    # restore basic actor state
+    player_pos = [730.0, 8230.0]
+    player_health = player_max_health
+    score = 0
+    streak = 0
+
+    # clear transient effects
+    try:
+        particles.empty()
+    except Exception:
+        particles = pygame.sprite.Group()
+    try:
+        enemy_projectiles.empty()
+    except Exception:
+        enemy_projectiles = pygame.sprite.Group()
+    popups = []
+
+    # reset powerups / temp goals / overlays
+    for k in powerup_timers.keys():
+        powerup_timers[k] = 0
+    temp_goal_timers.clear()
+    cluster_overlay_timer = 0
+
+    # clear and re-generate goals (keep same constraints as initial generation)
+    try:
+        goals[:] = []
+        try:
+            for gs in list(goal_sprites):
+                try:
+                    gs.kill()
+                except Exception:
+                    pass
+            goal_sprites.empty()
+        except Exception:
+            pass
+        goal_sprite_map.clear()
+    except Exception:
+        pass
+    generate_goals(WORLD_WIDTH, WORLD_HEIGHT, FORBIDDEN_Y_MAX, NUM_GOALS, check_collision, goal_radius=GOAL_RADIUS, sprite_scale=1.8)
+
+    # reset ball to player
+    try:
+        mushroom_ball.reset(player_pos)
+        mushroom_ball.active = False
+        mushroom_ball.stopped = True
+        mushroom_ball.return_timer = 0
+        mushroom_ball.hit_this_shot = False
+    except Exception:
+        pass
+
+    # restore flow flags
+    level_cleared = False
+    transporting = False
+    post_transport = False
+    player_locked = False
+    chest_opened = False
+    prev_chest_opened = False
+
+    # reset failed flag
+    level_failed = False
+    level_failed_start = 0
+
+    # reset runtime multipliers
+    player_speed_multiplier = 1.0
+    shoot_speed_multiplier = 1.0
+
+    # update camera to new player pos
+    try:
+        update_camera()
+    except Exception:
+        pass
 # Main loop
 running = True
 mouse_world_pos = [0, 0]  # Track mouse in world coords
 level_complete = False
 font = pygame.font.SysFont(None, 24)
 big_font = pygame.font.SysFont(None, 48)
-
 while running:
     # Build powerup slots (bottom-left) based on purchased counts
     powerup_slots = []  # list of dicts: {key, rect, count}
@@ -590,23 +743,62 @@ while running:
             r = pygame.Rect(x, base_y, 56, 56)
             powerup_slots.append({'key': key, 'rect': r, 'count': cnt})
             idx += 1
-
     for event in pygame.event.get():
         if event.type == pygame.QUIT:
             running = False
-
         # Click on powerup slot to use it
         if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
             mx, my = event.pos
             for slot in powerup_slots:
                 if slot['rect'].collidepoint((mx, my)):
                     k = slot['key']
-                    activate_powerup(k, inventory, powerup_timers, POWERUP_DURATION_FRAMES, 
-                                   POWERUP_DURATIONS, temp_goal_timers, goals, goal_sprites, 
-                                   goal_sprite_map, mushroom_ball, player_pos, 
-                                   check_collision_wrapper, GOAL_RADIUS, WORLD_WIDTH, 
-                                   WORLD_HEIGHT, FORBIDDEN_Y_MAX, particles)
-
+                    if inventory.get(k, 0) > 0 and powerup_timers.get(k, 0) == 0:
+                        # consume one
+                        inventory[k] = inventory.get(k, 0) - 1
+                        save_inventory(inventory)
+                        # activate effect using per-powerup override if present
+                        powerup_timers[k] = POWERUP_DURATIONS.get(k, POWERUP_DURATION_FRAMES)
+                        # apply immediate behaviors if needed
+                        if k == 'cluster_cap':
+                            # spawn up to 3 temporary goals near ball (or player if ball not active)
+                            spawned = 0
+                            # choose center: prefer ball if active, otherwise player
+                            if mushroom_ball and getattr(mushroom_ball, 'pos', None) and mushroom_ball.active:
+                                center_x, center_y = int(mushroom_ball.pos[0]), int(mushroom_ball.pos[1])
+                            else:
+                                center_x, center_y = int(player_pos[0]), int(player_pos[1])
+                            # try to place exactly 3 goals, with multiple attempts per placement
+                            for goal_i in range(3):
+                                placed = False
+                                for _try in range(12):
+                                    gx = center_x + random.randint(-100, 100)
+                                    gy = center_y + random.randint(-100, 100)
+                                    gx = max(GOAL_RADIUS, min(WORLD_WIDTH - GOAL_RADIUS, gx))
+                                    gy = max(GOAL_RADIUS, min(WORLD_HEIGHT - GOAL_RADIUS, gy))
+                                    if gy > FORBIDDEN_Y_MAX and not check_collision(gx, gy, GOAL_RADIUS):
+                                        goals.append([gx, gy])
+                                        gs = GoalSprite(gx, gy, index=len(goals))
+                                        goal_sprites.add(gs)
+                                        goal_sprite_map[(int(gx), int(gy))] = gs
+                                        # mark temporary so it will be removed later
+                                        temp_goal_timers[(int(gx), int(gy))] = POWERUP_DURATION_FRAMES
+                                        # spawn some particles so player notices
+                                        for _p in range(10):
+                                            particles.add(SporeParticle(gx, gy))
+                                        spawned += 1
+                                        placed = True
+                                        break
+                                if not placed:
+                                    # couldn't place this one; continue to next
+                                    continue
+                            # Activate full-screen soft green overlay for the duration
+                            globals()['cluster_overlay_timer'] = POWERUP_DURATION_FRAMES
+                            if spawned == 0:
+                                print("Cluster cap used but no safe spawn locations found near", center_x, center_y)
+                            else:
+                                print(f"Cluster cap spawned {spawned} temporary goals near ({center_x},{center_y})")
+                        # immediate feedback print
+                        print(f"Used {k}; remaining: {inventory.get(k,0)}")
         if event.type == pygame.KEYDOWN:
             if event.key == pygame.K_SPACE and mushroom_ball.stopped and not player_locked:  # Shoot if stopped
                 # Get mouse world pos
@@ -627,11 +819,9 @@ while running:
                         pass
                     pygame.quit()
                     sys.exit()
-
         # Optional: Zoom with mouse wheel (basic)
         if event.type == pygame.MOUSEWHEEL:
             pass  # Expand if needed
-
     if level_complete:
         # Flash screen on win
         flash_alpha = int(128 * math.sin(pygame.time.get_ticks() * 0.01))
@@ -640,35 +830,77 @@ while running:
         flash_surf.set_alpha(flash_alpha)
         screen.blit(flash_surf, (0, 0))
     else:
-        # Handle transport sequence
-        transport_started, new_transport_start = handle_transport_sequence(
-            level_cleared, level_cleared_start, transporting, post_transport, 
-            player_locked, player_pos, TRANSPORT_START_POS, TRANSPORT_END_POS,
-            TRANSPORT_DURATION_MS, tunnel_sound, tunnel_is_music
-        )
-        if transport_started:
-            transporting = True
-            # assign the returned start tick to our module-level variable
-            transport_start_ticks = new_transport_start
-
-        # Update transport if active
+        # If we're transporting the player, animate the tunnel movement and
+        # skip standard input / ball updates. Otherwise handle input normally.
+        # If level was just cleared, show a short "LEVEL CLEARED" message
+        # then teleport the player to the transport start and begin the tunnel.
+        if level_cleared and (not transporting) and (not post_transport):
+            now = pygame.time.get_ticks()
+            if now - level_cleared_start >= LEVEL_CLEARED_DISPLAY_MS:
+                # teleport player to transport start and begin transport
+                try:
+                    player_pos[0] = TRANSPORT_START_POS[0]
+                    player_pos[1] = TRANSPORT_START_POS[1]
+                    transporting = True
+                    transport_start_ticks = pygame.time.get_ticks()
+                    player_locked = True
+                    # play tunnel sound (when available)
+                    try:
+                        if tunnel_sound:
+                            if tunnel_is_music:
+                                pygame.mixer.music.play(-1)
+                            else:
+                                tunnel_sound.play(-1)
+                    except Exception:
+                        pass
+                except Exception:
+                    # if teleport fails, just mark as post_transport so player can move
+                    post_transport = True
+                    player_locked = False
         if transporting:
-            transporting, post_transport, player_locked = update_transport(
-                transporting, transport_start_ticks, player_pos, TRANSPORT_START_POS,
-                TRANSPORT_END_POS, TRANSPORT_DURATION_MS, tunnel_sound, tunnel_is_music
-            )
-
+            now = pygame.time.get_ticks()
+            elapsed = now - transport_start_ticks
+            t_raw = min(1.0, elapsed / float(TRANSPORT_DURATION_MS))
+            t = ease_in_out_cubic(t_raw)
+            # Lock X to transport start X and ease Y from start -> end
+            player_pos[0] = TRANSPORT_START_POS[0]
+            player_pos[1] = TRANSPORT_START_POS[1] + (TRANSPORT_END_POS[1] - TRANSPORT_START_POS[1]) * t
+            # Once transport finishes, mark level complete so the win screen shows
+            if t_raw >= 1.0:
+                transporting = False
+                post_transport = True
+                player_locked = False
+                # stop tunnel sound gracefully if playing
+                try:
+                    if tunnel_sound:
+                        if tunnel_is_music:
+                            try:
+                                pygame.mixer.music.fadeout(400)
+                            except Exception:
+                                try:
+                                    pygame.mixer.music.stop()
+                                except Exception:
+                                    pass
+                        else:
+                            try:
+                                tunnel_sound.fadeout(400)
+                            except Exception:
+                                try:
+                                    tunnel_sound.stop()
+                                except Exception:
+                                    pass
+                except Exception:
+                    pass
+            # Still allow particle updates and timers below; skip movement/ball logic
+            keys = pygame.key.get_pressed()  # dummy read to keep input state consistent
+        else:
+            # Handle input (arrow keys or WASD for player)
+            keys = pygame.key.get_pressed()
         # If not transporting and not locked, apply runtime movement, ball updates and goal checks.
         if (not transporting) and (not player_locked):
-            # Apply runtime player movement multiplier
-            player_speed_multiplier, shoot_speed_multiplier = get_powerup_effects(
-                powerup_timers, POWERUP_DURATIONS, POWERUP_DURATION_FRAMES
-            )
-            
-            cur_speed = PLAYER_SPEED * player_speed_multiplier
+            # Apply runtime player movement multiplier (allows velocity powerup to speed player)
+            cur_speed = PLAYER_SPEED * (player_speed_multiplier if player_speed_multiplier else 1.0)
             new_x, new_y = player_pos[0], player_pos[1]
-            
-            keys = pygame.key.get_pressed()
             if keys[pygame.K_LEFT] or keys[pygame.K_a]:
                 new_x -= cur_speed
             if keys[pygame.K_RIGHT] or keys[pygame.K_d]:
@@ -677,20 +909,18 @@ while running:
                 new_y -= cur_speed
             if keys[pygame.K_DOWN] or keys[pygame.K_s]:
                 new_y += cur_speed
-
             # Clamp proposed move to world bounds
             new_x = max(player_radius, min(new_x, WORLD_WIDTH - player_radius))
             new_y = max(player_radius, min(new_y, WORLD_HEIGHT - player_radius))
-
             # Test collision at new world position (silent)
-            if not check_collision_wrapper(new_x, new_y, player_radius):
+            if not check_collision(new_x, new_y, player_radius):
                 player_pos[0] = new_x
                 player_pos[1] = new_y
-
             # Update ball
             mushroom_ball.update()
 
-            # decrement automatic-return timer (frames)
+            # decrement automatic-return timer (frames). When it reaches 0 the existing
+            # stopped-check will allow the ball to reset back to the player.
             try:
                 if getattr(mushroom_ball, 'return_timer', 0) > 0:
                     mushroom_ball.return_timer -= 1
@@ -698,7 +928,6 @@ while running:
                         mushroom_ball.return_timer = 0
             except Exception:
                 pass
-
             hit_during_shot = False
             if mushroom_ball.active and not level_complete:
                 if check_goal_hit(mushroom_ball.pos, mushroom_ball.radius):
@@ -716,7 +945,7 @@ while running:
                     mushroom_ball.reset(player_pos)
                     mushroom_ball.return_timer = 0
 
-                    # If that was the last goal, enter the cleared state
+                    # If that was the last goal, enter the cleared state (same behavior)
                     if len(goals) == 0 and not level_cleared:
                         level_cleared = True
                         level_cleared_start = pygame.time.get_ticks()
@@ -735,27 +964,56 @@ while running:
                         if not mushroom_ball.hit_this_shot:
                             streak = 0
                         mushroom_ball.reset(player_pos)  # Auto-reset after stop (no pending timer)
-
         # Update particles (always run so effects continue during transport)
         particles.update()
-
         # Update goal bubbles
         enemy_projectiles.update()
-
         # Update pop-ups (always run)
         popups = [p for p in popups if p.update()]
+        # Update powerup timers and apply runtime flags (always run)
+        # Decrement timers
+        for k in list(powerup_timers.keys()):
+            if powerup_timers[k] > 0:
+                powerup_timers[k] -= 1
 
-        # Update powerup timers
-        update_powerup_timers(powerup_timers, temp_goal_timers, goals, goal_sprite_map, goal_sprites)
-
+        # APPLY runtime effects for active powerups (fix: actually change movement/shoot speed)
+        # Make velocity_vial noticeably faster while active
+        if powerup_timers.get('velocity_vial', 0) > 0:
+            # increase player movement and shooting speed while active
+            player_speed_multiplier = 2.5  # faster walking
+            shoot_speed_multiplier = 1.6   # faster ball shooting
+        else:
+            player_speed_multiplier = 1.0
+            shoot_speed_multiplier = 1.0
         # player's hit cooldown tick-down
         if player_hit_cooldown > 0:
             player_hit_cooldown -= 1
+        # Decrement temporary goal timers and remove expired temporary goals
+        for key in list(temp_goal_timers.keys()):
+            temp_goal_timers[key] -= 1
+            if temp_goal_timers[key] <= 0:
+                gx, gy = key
+                # remove matching goal from goals list
+                goals[:] = [g for g in goals if not (int(g[0]) == gx and int(g[1]) == gy)]
+                gs = goal_sprite_map.pop((gx, gy), None)
+                if gs:
+                    try:
+                        gs.kill()
+                    except Exception:
+                        pass
+                del temp_goal_timers[key]
 
+        # --- If temporary-goal expiry removed the last goal, make sure we mark the level cleared ---
+        try:
+            if len(goals) == 0 and not level_cleared:
+                level_cleared = True
+                level_cleared_start = pygame.time.get_ticks()
+                print("All goals cleared by temp-goal expiry — beginning transport delay")
+        except Exception:
+            pass
         # Decrement cluster overlay timer
-        if cluster_overlay_timer > 0:
-            cluster_overlay_timer -= 1
-
+        if globals().get('cluster_overlay_timer', 0) > 0:
+            globals()['cluster_overlay_timer'] -= 1
         # Aura auto-collect: if aura is active, collect nearby goals once per frame
         if powerup_timers.get('aura_alembic', 0) > 0:
             aura_collect()
@@ -775,51 +1033,22 @@ while running:
             # wait a short display time then reset the level
             now = pygame.time.get_ticks()
             if now - level_failed_start >= LEVEL_FAILED_DISPLAY_MS:
-                # Reset level using the refactored function
-                reset_data = reset_level(player_max_health, WORLD_WIDTH, WORLD_HEIGHT, 
-                                       FORBIDDEN_Y_MAX, NUM_GOALS, check_collision_wrapper, 
-                                       GOAL_RADIUS, generate_goals)
-                # Update local variables from reset data
-                player_pos = reset_data['player_pos']
-                player_health = reset_data['player_health']
-                score = reset_data['score']
-                streak = reset_data['streak']
-                particles = reset_data['particles']
-                enemy_projectiles = reset_data['enemy_projectiles']
-                popups = reset_data['popups']
-                level_cleared = reset_data['level_cleared']
-                transporting = reset_data['transporting']
-                post_transport = reset_data['post_transport']
-                player_locked = reset_data['player_locked']
-                chest_opened = reset_data['chest_opened']
-                prev_chest_opened = reset_data['prev_chest_opened']
-                level_failed = reset_data['level_failed']
-                level_failed_start = reset_data['level_failed_start']
-                player_speed_multiplier = reset_data['player_speed_multiplier']
-                shoot_speed_multiplier = reset_data['shoot_speed_multiplier']
-                cluster_overlay_timer = reset_data['cluster_overlay_timer']
-
+                reset_level()
     # Update camera to follow player/ball
-    cam_x, cam_y, screen_shake_timer = update_camera(player_pos, mushroom_ball, cam_x, cam_y,
-                                                    SCREEN_WIDTH, SCREEN_HEIGHT, WORLD_WIDTH,
-                                                    WORLD_HEIGHT, screen_shake_timer, 
-                                                    SCREEN_SHAKE_FRAMES)
-
+    update_camera()
     # Draw: Viewport from world
     src_rect = pygame.Rect(cam_x, cam_y, SCREEN_WIDTH, SCREEN_HEIGHT)
     screen.blit(map_image, (0, 0), src_rect)  # Background map viewport ONLY
-
     # If cluster overlay active, draw a soft green tint over the entire screen
-    if cluster_overlay_timer > 0:
+    if globals().get('cluster_overlay_timer', 0) > 0:
         # alpha pulses slightly for visual interest
-        rem = cluster_overlay_timer
+        rem = globals().get('cluster_overlay_timer', 0)
         frac = rem / float(POWERUP_DURATION_FRAMES)
         # alpha ranges 120 -> 60 as it expires
         alpha = int(120 * frac + 60 * (1 - frac))
         overlay = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
         overlay.fill((60, 200, 80, max(30, min(180, alpha))))
         screen.blit(overlay, (0, 0))
-
     # If golden gleam active, draw a soft yellow tint over the screen
     if powerup_timers.get('golden_gleam', 0) > 0:
         rem = powerup_timers.get('golden_gleam', 0)
@@ -840,7 +1069,6 @@ while running:
             screen.blit(lbl, lbl_rect)
         except Exception:
             pass
-
     # If velocity vial active, draw a soft blue tint over the screen
     if powerup_timers.get('velocity_vial', 0) > 0:
         rem = powerup_timers.get('velocity_vial', 0)
@@ -863,8 +1091,8 @@ while running:
             screen.blit(lbl, lbl_rect)
         except Exception:
             pass
-
     # If aura alembic active, draw a soft purple tint + lavender aura circle around player
+    # Add a faint pulse (subtle radius + alpha modulation) to make the aura more visible
     if powerup_timers.get('aura_alembic', 0) > 0:
         rem = powerup_timers.get('aura_alembic', 0)
         frac = rem / float(POWERUP_DURATION_FRAMES)
@@ -877,6 +1105,7 @@ while running:
             aura_screen_x = SCREEN_WIDTH // 2
             aura_screen_y = SCREEN_HEIGHT // 2
             # base pixel radius scaled from world radius, increase scale so it's larger on screen
+            # previous scaling could be very small on large maps; amplify by 1.6
             base_px = int(AURA_RADIUS * (SCREEN_WIDTH / float(WORLD_WIDTH)) * 1.6)
             # time-based pulse (seconds)
             t = pygame.time.get_ticks() / 1000.0
@@ -918,7 +1147,6 @@ while running:
             screen.blit(aura_surf, (aura_screen_x - aura_radius_px - 10, aura_screen_y - aura_radius_px - 10))
         except Exception:
             pass
-
     # Draw 'Level Cleared' message right after clearing goals and before teleport
     if level_cleared and (not transporting) and (not post_transport):
         now = pygame.time.get_ticks()
@@ -942,7 +1170,6 @@ while running:
             screen.blit(msg, r)
         except Exception:
             pass
-
     # If post-transport state active, draw chest and handle proximity
     if post_transport:
         try:
@@ -974,7 +1201,7 @@ while running:
                 screen.blit(chest_open_img, (screen_x, screen_y))
                 # show prompt
                 try:
-                    prompt = font.render("Press E to Enter Ending Scene", True, (240, 240, 240))
+                    prompt = font.render("Press E to exit", True, (240, 240, 240))
                     pr = prompt.get_rect(center=(SCREEN_WIDTH//2, SCREEN_HEIGHT - 60))
                     screen.blit(prompt, pr)
                 except Exception:
@@ -985,7 +1212,6 @@ while running:
             prev_chest_opened = new_opened
         except Exception:
             pass
-
     # Draw particles (world -> screen offset)
     for p in list(particles):
         try:
@@ -999,7 +1225,6 @@ while running:
                 particles.draw(screen)
             except Exception:
                 pass
-
     # Draw active goal bubbles
     for b in list(enemy_projectiles):
         try:
@@ -1009,14 +1234,14 @@ while running:
                 enemy_projectiles.remove(b)
             except Exception:
                 pass
-
-    # Draw goal sprites (animated)
+    # end draw goal bubbles
+    
+    # Draw goal sprites (animated). Update and blit each sprite relative to camera.
     goal_timer += 1
     for gs in list(goal_sprites):
         gs.step()
         gs.sync_to_camera(cam_x, cam_y)
-        
-        # Goal shooting behavior
+        # --- Goal shooting behavior: each goal has a shot timer and will fire a bubble at the player/ball ---
         try:
             # initialize per-sprite shot timer if missing
             if getattr(gs, 'shot_timer', None) is None:
@@ -1043,13 +1268,13 @@ while running:
                 dy = target[1] - spawn_y
                 dist = math.hypot(dx, dy) or 1.0
                 # bubble speed tuned to be noticeable but dodgeable
+                # faster bubbles per request
                 speed = random.uniform(5.0, 9.0)
                 vx = dx / dist * speed
                 vy = dy / dist * speed
                 enemy_projectiles.add(GoalBubble(spawn_x, spawn_y, vx, vy))
         except Exception:
             pass
-        
         try:
             # Lazily build a soft radial glow surface per-goal to avoid per-frame allocations.
             if getattr(gs, 'glow_image', None) is None:
@@ -1063,7 +1288,6 @@ while running:
                 for r, a in zip(radii, alphas):
                     pygame.draw.circle(glow, (255, 210, 120, a), (cx, cy), r)
                 gs.glow_image = glow
-            
             # Pulse the glow alpha over time (per-goal phase uses index if available)
             t = pygame.time.get_ticks() / 1000.0
             phase = (getattr(gs, 'index', 0) * 0.37)
@@ -1073,18 +1297,18 @@ while running:
                 gs.glow_image.set_alpha(alpha)
             except Exception:
                 pass
-            
             # Center glow on the goal's screen rect center
             glow_pos = (gs.rect.centerx - gs.glow_image.get_width() // 2,
                         gs.rect.centery - gs.glow_image.get_height() // 2)
             screen.blit(gs.glow_image, glow_pos)
-            
             # Finally draw the goal sprite itself
             screen.blit(gs.image, gs.rect)
         except Exception:
             pass
-
     # Draw player (always centered since cam follows)
+    # Update & draw character sprite centered at the player screen position.
+    # We let the sprite update its animation state (reads input) but keep it anchored
+    # to the screen center by resetting midbottom each frame.
     try:
         if character_sprite:
             character_sprite.update()  # advances animation / facing based on input
@@ -1098,7 +1322,6 @@ while running:
             pygame.draw.circle(screen, (0, 0, 255), (SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2), player_radius)
         except Exception:
             pass
-
     # Draw mushroom ball only when not transporting
     if not transporting:
         mushroom_ball.draw(screen, cam_x, cam_y)
@@ -1117,12 +1340,10 @@ while running:
             screen.blit(t_txt, t_rect)
         except Exception:
             pass
-
     # Draw score pop-ups
     for popup in popups:
         # ScorePopup.draw now requires a font argument
         popup.draw(screen, cam_x, cam_y, font)
-
     # Aim line (from player to mouse, if not shooting and not transporting or locked)
     if (not transporting) and (not player_locked) and mushroom_ball.stopped and not level_complete:
         mouse_screen = pygame.mouse.get_pos()
@@ -1138,15 +1359,13 @@ while running:
             start_screen = (SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2)
         end_screen = (mouse_screen[0], mouse_screen[1])
         pygame.draw.line(screen, (255, 255, 0), start_screen, end_screen, 2)
-
     # Draw minimap with real map texture
+    # draw_minimap has been moved to level2.ui and is parameterized to avoid globals
     draw_minimap(screen, player_pos, map_image, mushroom_ball, cam_x, cam_y,
                  WORLD_WIDTH, WORLD_HEIGHT, MINIMAP_SIZE, MINIMAP_ZOOM, goals)
-
-    # Info/UI with score
+    # Info/UI with score (don't display the word 'Streak' at the top; streak counter still used internally)
     info = font.render(f"Pos: ({int(player_pos[0])}, {int(player_pos[1])}) | Score: {score} | Goals left: {len(goals)} | SPACE to shoot! R to reset", True, (255, 255, 255))
     screen.blit(info, (10, 10))
-
     # Draw player health bar
     try:
         hb_x, hb_y = 10, 36
@@ -1166,16 +1385,37 @@ while running:
             pass
     except Exception:
         pass
-
-    # Draw powerup UI
-    draw_powerup_ui(screen, powerup_slots, powerup_images, powerup_timers, font, FPS)
-
+    # Draw purchased powerups as icons at bottom-left; clicking uses them
+    # powerup_slots was computed at top of loop
+    for slot in powerup_slots:
+        r = slot['rect']
+        # background card
+        pygame.draw.rect(screen, (40, 40, 40), r)
+        pygame.draw.rect(screen, (120, 120, 120), r, 2)
+        # icon
+        key = slot['key']
+        img = powerup_images.get(key)
+        if img:
+            img_r = img.get_rect(center=(r.x + 28, r.y + 28))
+            screen.blit(img, img_r)
+        # count badge
+        cnt = slot['count']
+        badge_pos = (r.right - 10, r.y + 10)
+        pygame.draw.circle(screen, (0, 200, 0), badge_pos, 10)
+        ct = font.render(str(cnt), True, (0, 0, 0))
+        ct_r = ct.get_rect(center=badge_pos)
+        screen.blit(ct, ct_r)
+        # if active, draw remaining seconds indicator (small bar)
+        t = powerup_timers.get(key, 0)
+        if t > 0:
+            secs = int(math.ceil(t / float(FPS)))
+            sec_text = font.render(f"{secs}s", True, (255, 255, 0))
+            st_r = sec_text.get_rect(center=(r.centerx, r.y - 10))
+            screen.blit(sec_text, st_r)
     if level_complete:
         win_text = big_font.render("LEVEL COMPLETE! Final Score: " + str(score), True, (255, 255, 0))
         screen.blit(win_text, (SCREEN_WIDTH//2 - win_text.get_width()//2, SCREEN_HEIGHT//2))
-
     pygame.display.flip()
     clock.tick(FPS)
-
 pygame.quit()
 sys.exit()
