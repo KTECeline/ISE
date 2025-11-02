@@ -80,7 +80,7 @@ STORY_LINES = [
     "In the ancient fungal realm of Echofungus, a vast underground world woven from mycelial threads and spore-veiled caverns, life pulses through symbiotic cycles of decay and rebirth.",
     "But a cataclysmic Blightstorm—a spore plague—fractured the realm, starving the guardian monsters that hold back the encroaching void.",
     "You are a Surface Echo, a rare wanderer from the barren above-world, drawn by Hyphara's call to restore balance.",
-    "Your journey involves collecting and feeding sacred mushrooms to these monstrous guardians, awakening their strength and mending the mycelial web.",
+    "Your journey involves collecting and feeding sacred mushrooms to these monstrous guardians, awakening their strength and mending the mycelial web.", 
     "Failure means the Blightstorm consumes all; success earns Hyphara's gratitude and ascension to the Sporelit Heavens.",
     "Your journey begins now."
 ]
@@ -550,11 +550,8 @@ def start_game_cb():
     set_scene_with_fade("story_intro")
 
 def start_level_1():
-    """Run Level 1, then Marketplace, then Level 2 in sequence.
-
-    This function blocks while each subprocess runs. When Marketplace exits
-    with returncode 2 it means the player chose to start Level 2; in that
-    case we launch Level 2 and finally return to the menu when Level 2 exits.
+    """Close the menu process and replace it with level_1.py so the menu
+    does not remain running in the background.
     """
     if not os.path.exists("level_1.py"):
         print("[INFO] level_1.py not found — returning to menu.")
@@ -566,39 +563,29 @@ def start_level_1():
         game_data["current_level"] = 1
         save_game_data(game_data)
 
-        # Run Level 1 (blocking). When it exits, continue to Marketplace.
-        subprocess.run([sys.executable, "level_1.py"]) 
-
-        # After Level 1, run the Marketplace as a blocking subprocess and
-        # inspect its exit code to decide whether to start Level 2.
+        # Try to cleanly shutdown pygame and exec into level_1.py so this
+        # process is replaced (no lingering menu process).
         try:
-            res = subprocess.run([sys.executable, "marketplace.py"])  # blocking
-        except Exception as e:
-            print("[WARN] marketplace launch failed:", e)
-            set_scene_with_fade("menu")
-            return
+            pygame.quit()
+        except Exception:
+            pass
 
-        # Convention: marketplace exits with code 2 to signal "start level2".
-        if getattr(res, 'returncode', 0) == 2:
-            # Launch Level 2 and wait for it to finish, then return to menu
-            try:
-                subprocess.run([sys.executable, "level_2.py"])  # blocking
-                # After Level 2 finishes as part of the full flow, exit the menu
-                # application so we don't loop back into the menu endlessly.
-                save_game_data(game_data)
-                try:
-                    pygame.quit()
-                except Exception:
-                    pass
-                sys.exit(0)
-            except Exception as e:
-                print("[WARN] launching level_2.py failed:", e)
-
-        # Finally, return to the main menu scene
-        set_scene_with_fade("menu")
+        script = os.path.abspath("level_1.py")
+        os.execv(sys.executable, [sys.executable, script])
     except Exception as e:
-        print("[WARN] launching level_1.py failed:", e)
-        set_scene_with_fade("menu")
+        # Exec failed — fallback to launching as subprocess then exit.
+        print("[WARN] execv failed, falling back to subprocess.run:", e)
+        try:
+            subprocess.run([sys.executable, "level_1.py"])
+        except Exception as e2:
+            print("[ERROR] Failed to launch level_1.py:", e2)
+        finally:
+            # Ensure the menu process exits after attempting fallback
+            try:
+                pygame.quit()
+            except Exception:
+                pass
+            sys.exit(0)
 
 def set_scene_with_fade(target):
     global scene_fade
