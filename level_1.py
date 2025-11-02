@@ -331,6 +331,23 @@ player = SpriteSheetAnimation(
 
 player.origin = (0, -0.15)
 
+# Create player glow/aura effect (circular)
+player_glow = Entity(
+    parent=player,
+    model='circle',  # Changed to circle for round glow
+    scale=2.2,  # Slightly larger than player
+    position=(0, -0.05, 0),  # Slightly below player on Y axis to appear behind
+    rotation_x=0,  # Match player's rotation
+    color=color.rgba(150, 200, 255, 40),  # Soft blue glow - more transparent
+    alpha=0.15,  # More transparent
+    double_sided=True
+)
+
+# Glow animation properties
+player_glow.pulse_time = 0
+player_glow.base_scale = 2.2
+player_glow.base_alpha = 0.15  # More transparent base alpha
+
 # Initialize particle system
 for i in range(particle_count):
     # Spawn particles around the starting area
@@ -426,6 +443,25 @@ red_coin.frame_duration = 0.2    # Time per frame in seconds
 green_coin.frame_duration = 0.2  # Time per frame in seconds
 blue_coin.frame_duration = 0.2   # Time per frame in seconds
 
+# Idle pulsing animation variables
+red_coin.pulse_time = 0
+green_coin.pulse_time = 0
+blue_coin.pulse_time = 0
+red_coin.base_scale = 1
+green_coin.base_scale = 1
+blue_coin.base_scale = 1
+
+# Collection animation variables
+red_coin.is_collecting = False
+green_coin.is_collecting = False
+blue_coin.is_collecting = False
+red_coin.collect_time = 0
+green_coin.collect_time = 0
+blue_coin.collect_time = 0
+red_coin.collect_duration = 0.5  # Duration of expand animation before disappearing
+green_coin.collect_duration = 0.5
+blue_coin.collect_duration = 0.5
+
 def update_coin_animation():
     # Update red coin
     red_coin.animation_time += time.dt
@@ -450,6 +486,59 @@ def update_coin_animation():
         blue_coin.frame = (blue_coin.frame + 1) % 5
         blue_coin.texture_offset = (blue_coin.frame/5, 0)
         blue_coin.animation_time = 0
+    
+    # Idle pulsing animation for red coin
+    if red_coin.enabled and not red_coin.is_collecting:
+        red_coin.pulse_time += time.dt * 3  # Speed of pulsing
+        pulse_scale = red_coin.base_scale + math.sin(red_coin.pulse_time) * 0.15  # Pulse between 0.85 and 1.15
+        red_coin.scale = (pulse_scale, pulse_scale)
+    
+    # Idle pulsing animation for green coin
+    if green_coin.enabled and not green_coin.is_collecting:
+        green_coin.pulse_time += time.dt * 3
+        pulse_scale = green_coin.base_scale + math.sin(green_coin.pulse_time) * 0.15
+        green_coin.scale = (pulse_scale, pulse_scale)
+    
+    # Idle pulsing animation for blue coin
+    if blue_coin.enabled and not blue_coin.is_collecting:
+        blue_coin.pulse_time += time.dt * 3
+        pulse_scale = blue_coin.base_scale + math.sin(blue_coin.pulse_time) * 0.15
+        blue_coin.scale = (pulse_scale, pulse_scale)
+    
+    # Collection animation for red coin
+    if red_coin.is_collecting:
+        red_coin.collect_time += time.dt
+        # Expand animation (scale from 1 to 2.5)
+        expand_progress = red_coin.collect_time / red_coin.collect_duration
+        expand_scale = 1 + (expand_progress * 1.5)  # Grows from 1 to 2.5
+        red_coin.scale = (expand_scale, expand_scale)
+        
+        # Disable after animation completes
+        if red_coin.collect_time >= red_coin.collect_duration:
+            red_coin.enabled = False
+            red_coin.is_collecting = False
+    
+    # Collection animation for green coin
+    if green_coin.is_collecting:
+        green_coin.collect_time += time.dt
+        expand_progress = green_coin.collect_time / green_coin.collect_duration
+        expand_scale = 1 + (expand_progress * 1.5)
+        green_coin.scale = (expand_scale, expand_scale)
+        
+        if green_coin.collect_time >= green_coin.collect_duration:
+            green_coin.enabled = False
+            green_coin.is_collecting = False
+    
+    # Collection animation for blue coin
+    if blue_coin.is_collecting:
+        blue_coin.collect_time += time.dt
+        expand_progress = blue_coin.collect_time / blue_coin.collect_duration
+        expand_scale = 1 + (expand_progress * 1.5)
+        blue_coin.scale = (expand_scale, expand_scale)
+        
+        if blue_coin.collect_time >= blue_coin.collect_duration:
+            blue_coin.enabled = False
+            blue_coin.is_collecting = False
 
 # Create camera positioned above the player for top-down view
 camera.position = (0, 21, 0)  # Set default height to 21
@@ -837,6 +926,25 @@ def update():
     # Update coin animation
     update_coin_animation()
     
+    # Update player glow animation (pulsing effect)
+    player_glow.pulse_time += time.dt * 2  # Pulse speed
+    pulse = math.sin(player_glow.pulse_time) * 0.15  # Pulse range
+    player_glow.scale = player_glow.base_scale + pulse
+    
+    # Adjust glow intensity based on player state
+    if is_dashing:
+        # Brighter and more intense during dash
+        player_glow.color = color.rgba(180, 220, 255, 60)
+        player_glow.alpha = 0.25
+    elif not on_ground:
+        # Slightly brighter when jumping/in air
+        player_glow.color = color.rgba(160, 210, 255, 50)
+        player_glow.alpha = 0.2
+    else:
+        # Normal subtle glow
+        player_glow.color = color.rgba(150, 200, 255, 40)
+        player_glow.alpha = 0.15
+    
     # Check if player is on a trap
     if check_trap_collision():
         velocity_z = 0
@@ -873,20 +981,23 @@ def update():
         camera.rotation_x = lerp(camera.rotation_x, 90, time.dt * 5)
     
     # Check coin collection
-    if red_coin.enabled and check_coin_collection(red_coin, player):
-        red_coin.enabled = False
+    if red_coin.enabled and not red_coin.is_collecting and check_coin_collection(red_coin, player):
+        red_coin.is_collecting = True
+        red_coin.collect_time = 0
         score += 1
         score_text.text = f'Mushroom Coins collected: {score}'
         mushroom_coin_sound.play()
         
-    if green_coin.enabled and check_coin_collection(green_coin, player):
-        green_coin.enabled = False
+    if green_coin.enabled and not green_coin.is_collecting and check_coin_collection(green_coin, player):
+        green_coin.is_collecting = True
+        green_coin.collect_time = 0
         score += 1
         score_text.text = f'Mushroom Coins collected: {score}'
         mushroom_coin_sound.play()
         
-    if blue_coin.enabled and check_coin_collection(blue_coin, player):
-        blue_coin.enabled = False
+    if blue_coin.enabled and not blue_coin.is_collecting and check_coin_collection(blue_coin, player):
+        blue_coin.is_collecting = True
+        blue_coin.collect_time = 0
         score += 1
         score_text.text = f'Mushroom Coins collected: {score}'
         mushroom_coin_sound.play()
