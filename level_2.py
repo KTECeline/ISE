@@ -974,7 +974,7 @@ while running:
                 screen.blit(chest_open_img, (screen_x, screen_y))
                 # show prompt
                 try:
-                    prompt = font.render("Press E to exit", True, (240, 240, 240))
+                    prompt = font.render("Press E to Enter Ending Scene", True, (240, 240, 240))
                     pr = prompt.get_rect(center=(SCREEN_WIDTH//2, SCREEN_HEIGHT - 60))
                     screen.blit(prompt, pr)
                 except Exception:

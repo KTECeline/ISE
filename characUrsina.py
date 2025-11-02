@@ -1,4 +1,5 @@
 from ursina import *
+from ursina import SpriteSheetAnimation
 
 app = Ursina()
 

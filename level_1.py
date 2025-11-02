@@ -752,6 +752,12 @@ def check_trap_collision():
         return False
 
 def update():
+    global current_animation, velocity_y, on_ground, facePosition
+    global can_jump, jump_timer, is_dashing, dash_timer, can_dash, dash_cooldown_timer
+
+    moving = False
+    squating = False
+    #character value
     global score, diagnostic_mode, prev_t_state
     global current_animation, velocity_y, on_ground, facePosition
     global can_jump, jump_timer, is_dashing, dash_timer, can_dash, dash_cooldown_timer
