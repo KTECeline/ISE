@@ -50,6 +50,9 @@ app = Ursina()
 # Remove the internal exit button
 window.exit_button.enabled = False
 
+# Set the background color to black for out-of-bounds areas
+window.color = color.black
+
 # Load and play background music
 bgm_path = os.path.join('assets', 'music', 'Level_1_bgm_In_Gloomy_Meditation.mp3')
 pygame.mixer.music.load(bgm_path)
@@ -298,36 +301,6 @@ particle_count = 50  # Number of particles in the scene
 diagnostic_mode = False
 prev_t_state = False
 
-# Debug text for collision checking
-collision_debug = Text(
-    text='No collision data',
-    position=(-0.85, -0.35),
-    scale=1.2,
-    origin=(0, 0),
-    background=True,
-    enabled=False  # Hidden by default
-)
-
-# Collision type indicator
-collision_type_text = Text(
-    text='Collision: None',
-    position=(-0.85, -0.40),
-    scale=1.2,
-    origin=(0, 0),
-    background=True,
-    enabled=False  # Hidden by default
-)
-
-# Animation state indicator
-animation_debug_text = Text(
-    text='Animation: idle',
-    position=(-0.85, -0.45),
-    scale=1.2,
-    origin=(0, 0),
-    background=True,
-    enabled=False  # Hidden by default
-)
-
 # Create player with sprite sheet animation
 player = SpriteSheetAnimation(
     'character/chamove', 
@@ -515,6 +488,18 @@ lives_text = Text(
     background=True
 )
 
+# Zoom instructions for normal mode
+zoom_instructions = Text(
+    text='Q/E or Mouse Scroll to Zoom In/Out',
+    scale=1.2,
+    origin=(0, 0),
+    position=(0, 0.45),
+    color=color.light_gray,
+    parent=camera.ui,
+    background=True,
+    enabled=True
+)
+
 # Game Over screen elements
 game_over_panel = Entity(
     model='quad',
@@ -628,6 +613,88 @@ zoom_indicator = Text(
     enabled=False  # Hidden
 )
 
+# Info/Guide panel
+info_panel = Entity(
+    model='quad',
+    color=color.rgba(0, 0, 0, 200),
+    scale=(1.8, 1.0),
+    position=(0, 0),
+    parent=camera.ui,
+    enabled=False
+)
+
+info_title = Text(
+    text='=== GAME GUIDE ===',
+    scale=2,
+    origin=(0, 0),
+    position=(0, 0.38),
+    color=color.yellow,
+    parent=camera.ui,
+    enabled=False
+)
+
+info_text_1 = Text(
+    text='1) Collect 3 Mushroom Coins to pass. They\'re located throughout the map',
+    scale=1.2,
+    origin=(0, 0),
+    position=(0, 0.25),
+    color=color.white,
+    parent=camera.ui,
+    enabled=False
+)
+
+info_text_2 = Text(
+    text='2) Be careful! Take damage from spikes three times and it\'s game over!',
+    scale=1.2,
+    origin=(0, 0),
+    position=(0, 0.12),
+    color=color.white,
+    parent=camera.ui,
+    enabled=False
+)
+
+info_text_3 = Text(
+    text='3) Controls: A/D - Move | S - Crouch/Fast Fall | SPACE - Jump/Wall Jump | SHIFT - Dash',
+    scale=1.1,
+    origin=(0, 0),
+    position=(0, -0.01),
+    color=color.white,
+    parent=camera.ui,
+    enabled=False
+)
+
+info_text_4 = Text(
+    text='4) Press "T" to enter Diagnostic Mode and see what happens!',
+    scale=1.2,
+    origin=(0, 0),
+    position=(0, -0.14),
+    color=color.cyan,
+    parent=camera.ui,
+    enabled=False
+)
+
+info_hint = Text(
+    text='Hold "Y" to view this guide anytime',
+    scale=1,
+    origin=(0, 0),
+    position=(0, -0.28),
+    color=color.light_gray,
+    parent=camera.ui,
+    enabled=False
+)
+
+# Diagnostic mode zoom instructions
+diagnostic_zoom_text = Text(
+    text='Diagnostic Mode: Use Q/E or Mouse Scroll to Zoom In/Out',
+    scale=1.5,
+    origin=(0, 0),
+    position=(0, -0.45),
+    color=color.orange,
+    parent=camera.ui,
+    background=True,
+    enabled=False
+)
+
 def check_coin_collection(coin, player):
     # Calculate distance between player and coin
     distance = (coin.position - player.position).length()
@@ -689,9 +756,6 @@ def check_collision(new_position):
         # Get color at position from collision map
         color = collision_ground.texture.get_pixel(tex_x, tex_z)
         
-        # Debug color information
-        collision_debug.text = f'Pos: ({tex_x}, {tex_z}) Color: R:{int(color[0]*255)} G:{int(color[1]*255)} B:{int(color[2]*255)}'
-        
         # Check if it's near the wall color (ED1C24 - red) with some tolerance
         is_wall = (abs(color[0] - 237/255) < 0.1 and 
                   abs(color[1] - 28/255) < 0.1 and 
@@ -702,22 +766,8 @@ def check_collision(new_position):
                   abs(color[1] - 199/255) < 0.1 and 
                   abs(color[2] - 34/255) < 0.1)
         
-        # Update collision type indicator
-        if is_wall:
-            collision_type_text.text = 'Collision: WALL (Red)'
-        elif is_trap:
-            collision_type_text.text = 'Collision: TRAP (Green)'
-        else:
-            collision_type_text.text = 'Collision: None (Safe)'
-        
         return is_wall
     except Exception as e:
-        collision_debug.text = f'Error: {str(e)}'
-        collision_type_text.text = 'Collision: ERROR'
-        return True  # Assume collision on error
-    except Exception as e:
-        collision_debug.text = f'Error: {str(e)}'
-        collision_type_text.text = 'Collision: ERROR'
         return True  # Assume collision on error
 
 def check_ground(position):
@@ -811,7 +861,7 @@ def update():
     moving = False
     squating = False
     #character value
-    global score, diagnostic_mode, prev_t_state
+    global score, diagnostic_mode, prev_t_state, show_info, prev_y_state
     
     # Skip all updates if game is completed (except for animations)
     if is_game_completed:
@@ -831,10 +881,32 @@ def update():
         diagnostic_mode = not diagnostic_mode
     prev_t_state = held_keys['t']
     
-    # Update UI elements based on diagnostic mode
-    collision_debug.enabled = diagnostic_mode
-    collision_type_text.enabled = diagnostic_mode
-    animation_debug_text.enabled = diagnostic_mode
+    # Toggle info panel when Y is held
+    if held_keys['y'] and not prev_y_state:
+        show_info = True
+        info_panel.enabled = True
+        info_title.enabled = True
+        info_text_1.enabled = True
+        info_text_2.enabled = True
+        info_text_3.enabled = True
+        info_text_4.enabled = True
+        info_hint.enabled = True
+    elif not held_keys['y'] and prev_y_state:
+        show_info = False
+        info_panel.enabled = False
+        info_title.enabled = False
+        info_text_1.enabled = False
+        info_text_2.enabled = False
+        info_text_3.enabled = False
+        info_text_4.enabled = False
+        info_hint.enabled = False
+    prev_y_state = held_keys['y']
+    
+    # Update diagnostic mode zoom text visibility
+    diagnostic_zoom_text.enabled = diagnostic_mode
+    
+    # Hide normal zoom instructions when in diagnostic mode or showing info
+    zoom_instructions.enabled = not diagnostic_mode and not show_info
     
     # Always update collision info at current position for diagnostic display
     if diagnostic_mode:
@@ -869,10 +941,6 @@ def update():
     if score == 3:
         show_success()
     
-    # Update animation debug BEFORE any animation changes
-    if diagnostic_mode:
-        animation_debug_text.text = f'Animation: {current_animation} | Moving: {moving} | OnGround: {on_ground} | Dashing: {is_dashing}'
-
     # --- update jump cooldown ---
     if not can_jump:
         jump_timer += time.dt
@@ -1118,13 +1186,7 @@ def update():
             player.z + camera_offset
         )
     else:
-        # Normal mode - follow player with Q/E zoom controls
-        if held_keys['q']:
-            camera.y += zoom_speed * time.dt * 10
-            camera.y = clamp(camera.y, min_height, max_height)
-        if held_keys['e']:
-            camera.y -= zoom_speed * time.dt * 10
-            camera.y = clamp(camera.y, min_height, max_height)
+        # Normal mode - follow player (Q/E zoom disabled in normal mode)
         camera.position = (player.x, camera.y, player.z)
     
     # Update zoom indicator
@@ -1135,7 +1197,7 @@ def input(key):
     if key == 'escape':
         application.quit()
     
-    # Zoom with scroll wheel
+    # Zoom with scroll wheel (only in diagnostic mode)
     if diagnostic_mode:
         if key == 'scroll up':
             diagnostic_zoom -= zoom_speed * 4
@@ -1143,13 +1205,6 @@ def input(key):
         if key == 'scroll down':
             diagnostic_zoom += zoom_speed * 4
             diagnostic_zoom = clamp(diagnostic_zoom, diagnostic_min_zoom, diagnostic_max_zoom)
-    else:
-        if key == 'scroll up':
-            camera.y -= zoom_speed
-            camera.y = clamp(camera.y, min_height, max_height)
-        if key == 'scroll down':
-            camera.y += zoom_speed
-            camera.y = clamp(camera.y, min_height, max_height)
 
 # Function to show success screen
 def show_success():
