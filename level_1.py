@@ -380,9 +380,10 @@ diagnostic_min_zoom = 3
 diagnostic_max_zoom = 40  # Increased max zoom for more zoomed out view
 diagnostic_zoom = 25  # Starting with a more zoomed out view
 
-# Score and lives display
+    # Score, lives and game state
 score = 0
 lives = 3
+is_game_over = False
 score_text = Text(
     text='Mushroom Coins collected: 0',
     position=(-0.5, 0.45),
@@ -399,7 +400,34 @@ lives_text = Text(
     background=True
 )
 
-# Store initial player position for respawn
+# Game Over screen elements
+game_over_panel = Entity(
+    model='quad',
+    color=color.black66,
+    scale=(2, 1),
+    position=(0, 0),
+    parent=camera.ui,
+    enabled=False
+)
+
+game_over_text = Text(
+    text='GAME OVER',
+    scale=4,
+    origin=(0, 0),
+    position=(0, 0.1),
+    color=color.red,
+    parent=camera.ui,
+    enabled=False
+)
+
+retry_button = Button(
+    text='Retry',
+    color=color.red,
+    scale=(0.2, 0.1),
+    position=(0, -0.1),
+    parent=camera.ui,
+    enabled=False
+)# Store initial player position for respawn
 initial_player_position = Vec3(12, 0.25, -32)
 
 # Zoom level indicator
@@ -492,7 +520,11 @@ def check_ground(position):
 
 def check_trap_collision():
     """Check if player is on a trap"""
-    global lives
+    global lives, is_game_over
+    # Don't check for traps if game is already over
+    if is_game_over:
+        return False
+
     # Convert player position to UV coordinates
     scale_x, _, scale_z = collision_ground.scale
     tex_x = int((player.x / scale_x + 0.5) * collision_ground.texture.width)
@@ -516,6 +548,13 @@ def check_trap_collision():
             # Lose a life and respawn
             lives -= 1
             lives_text.text = f'Lives: {lives}'
+            
+            # Check if game over
+            if lives <= 0:
+                is_game_over = True
+                show_game_over()
+                return True
+                
             # Reset position to initial spawn point
             player.position = initial_player_position
             # Reset velocity and animation state
@@ -803,6 +842,40 @@ def input(key):
     else:
         # No zoom controls in normal mode
         pass
+
+# Function to show game over screen
+def show_game_over():
+    game_over_panel.enabled = True
+    game_over_text.enabled = True
+    retry_button.enabled = True
+    # Disable player movement
+    player.enabled = False
+
+def reset_game():
+    global lives, score, is_game_over
+    # Reset game state
+    lives = 3
+    score = 0
+    is_game_over = False
+    lives_text.text = f'Lives: {lives}'
+    score_text.text = f'Mushroom Coins collected: {score}'
+    
+    # Reset player
+    player.enabled = True
+    player.position = initial_player_position
+    
+    # Reset coins if they were collected
+    red_coin.enabled = True
+    green_coin.enabled = True
+    blue_coin.enabled = True
+    
+    # Hide game over screen
+    game_over_panel.enabled = False
+    game_over_text.enabled = False
+    retry_button.enabled = False
+
+# Set up retry button click handler
+retry_button.on_click = reset_game
 
 # Add ambient light for better visibility
 AmbientLight(color=color.rgba(255, 255, 255, 0.5))
