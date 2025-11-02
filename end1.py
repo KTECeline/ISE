@@ -211,6 +211,7 @@ for ending in endings:
     text_progress = 0
     typing_speed = 2
     sound_played = False
+    current_sound = None  # Track the currently playing sound
     clock = pygame.time.Clock()
     
     running_ending = True
@@ -221,6 +222,10 @@ for ending in endings:
                 sys.exit()
             elif event.type == pygame.KEYDOWN:
                 if event.key == pygame.K_SPACE or event.key == pygame.K_RETURN or event.key == pygame.K_RIGHT:
+                    # Stop current sound if playing
+                    if current_sound:
+                        current_sound.stop()
+                    
                     # Move to next line or advance text
                     if text_progress >= len(ending["dialog"][current_line]["text"]):
                         if current_line < len(ending["dialog"]) - 1:
@@ -233,6 +238,10 @@ for ending in endings:
                     else:
                         text_progress = len(ending["dialog"][current_line]["text"])
             elif event.type == pygame.MOUSEBUTTONDOWN:
+                # Stop current sound if playing
+                if current_sound:
+                    current_sound.stop()
+                
                 # Click to advance
                 if text_progress >= len(ending["dialog"][current_line]["text"]):
                     if current_line < len(ending["dialog"]) - 1:
@@ -253,7 +262,8 @@ for ending in endings:
         if not sound_played and text_progress > 0:
             sound_key = ending["dialog"][current_line]["sound"]
             if sound_key in sounds:
-                sounds[sound_key].play()
+                current_sound = sounds[sound_key]
+                current_sound.play()
             sound_played = True
         
         # Draw background
@@ -288,5 +298,5 @@ for ending in endings:
         clock.tick(60)
 
 # Clean up and exit after all endings
-pygame.quit()
-sys.exit() 
+import main_menu
+main_menu.main_loop()
