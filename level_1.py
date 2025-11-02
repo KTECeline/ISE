@@ -104,11 +104,15 @@ class Particle(Entity):
         base_scale = random.uniform(0.1, 0.25)  # Varied sizes
         glow_strength = random.uniform(0.8, 1.2)  # Variable glow intensity
         
+        # Store base colors for consistent recreation
+        self.base_color = color.rgba(200, 255, 180, 180)
+        self.glow_color = color.rgba(200, 255, 180, 100)
+        
         # Create the main particle
         super().__init__(
             model='sphere',
             scale=base_scale,
-            color=color.rgba(200, 255, 180, 180),
+            color=self.base_color,
             **kwargs
         )
         
@@ -117,9 +121,15 @@ class Particle(Entity):
             parent=self,
             model='sphere',
             scale=1.5,  # Slightly larger than parent
-            color=color.rgba(200, 255, 180, 100),
-            alpha=0.3 * glow_strength
+            color=self.glow_color,
+            alpha=0.3 * glow_strength,
+            double_sided=True  # Ensures glow is visible from all angles
         )
+        
+        # Store initial properties
+        self.glow_strength = glow_strength
+        self.base_alpha = 180
+        self.glow_base_alpha = 100
         
         # Random movement parameters
         self.velocity = Vec3(
@@ -138,26 +148,54 @@ class Particle(Entity):
         self.base_scale = base_scale
         
     def update(self):
-        # Floating movement with sine wave drift
-        self.age += time.dt
+        # Calculate distance to player
+        dist_to_player = (Vec3(self.x, self.y, self.z) - Vec3(player.x, player.y, player.z)).length()
+        
+        # Dynamic update rate based on distance
+        update_scale = min(1.0, 5.0 / (dist_to_player + 1))  # Closer = more frequent updates
+        
+        # Floating movement with sine wave drift, scaled by distance
+        self.age += time.dt * update_scale
         drift = math.sin(self.age * self.float_speed + self.drift_offset) * 0.5
         
-        self.x += (self.velocity.x + drift * 0.1) * time.dt
-        self.y += self.velocity.y * time.dt * 0.5
-        self.z += (self.velocity.z + drift * 0.1) * time.dt
+        # Movement scaled by distance
+        movement_scale = max(0.2, min(1.0, 3.0 / dist_to_player))  # Smoother movement when closer
+        self.x += (self.velocity.x + drift * 0.1) * time.dt * movement_scale
+        self.y += self.velocity.y * time.dt * 0.5 * movement_scale
+        self.z += (self.velocity.z + drift * 0.1) * time.dt * movement_scale
         
-        # Pulsing size effect
-        pulse = math.sin(self.age * self.pulse_speed) * self.pulse_magnitude + 1
+        # Pulsing size effect with distance-based intensity
+        pulse_intensity = max(0.3, min(1.0, 2.0 / dist_to_player))
+        pulse = math.sin(self.age * self.pulse_speed) * (self.pulse_magnitude * pulse_intensity) + 1
         self.scale = self.base_scale * pulse
-        self.glow.scale = 1.5 + pulse * 0.2  # Glow follows the pulse
+        self.glow.scale = 1.5 + pulse * 0.2 * pulse_intensity  # Glow follows the pulse
         
+        # Check distance from player
+        dist_to_player = (Vec3(self.x, self.y, self.z) - Vec3(player.x, player.y, player.z)).length()
+        max_distance = 20  # Maximum distance from player before forcing respawn
+        
+        # Force respawn if too far from player
+        if dist_to_player > max_distance:
+            self.respawn()
+            return
+            
         # Fade out near end of lifetime
         fade_start = 0.7  # Start fading at 70% of lifetime
         if self.age / self.lifetime > fade_start:
             fade_progress = (self.age / self.lifetime - fade_start) / (1 - fade_start)
             alpha = 1 - fade_progress
-            self.color = color.rgba(200, 255, 180, int(alpha * 180))
-            self.glow.color = color.rgba(200, 255, 180, int(alpha * 100))
+            # Update main particle color
+            self.color = color.rgba(200, 255, 180, int(alpha * self.base_alpha))
+            # Update glow effect
+            self.glow.alpha = 0.3 * self.glow_strength * alpha
+        else:
+            # Maintain normal appearance when not fading
+            self.color = self.base_color
+            self.glow.color = self.glow_color
+            self.glow.alpha = 0.3 * self.glow_strength
+        
+        # Ensure glow effect maintains proper scale relative to particle
+        self.glow.scale = Vec3(1.5, 1.5, 1.5)
         
         # Add slight rotation for more dynamic appearance
         self.rotation_y += time.dt * random.uniform(-20, 20)
@@ -167,14 +205,21 @@ class Particle(Entity):
             self.respawn()
     
     def respawn(self):
-        # Respawn around the player position
+        # Calculate spawn position relative to current player position
         angle = random.uniform(0, 6.28)
         radius = random.uniform(5, 15)
-        self.position = (
-            player.x + math.cos(angle) * radius,
+        
+        # Get player's current position for respawn
+        current_player_pos = Vec3(player.position)
+        
+        # Set new position around current player location
+        self.position = Vec3(
+            current_player_pos.x + math.cos(angle) * radius,
             random.uniform(0.5, 3),
-            player.z + math.sin(angle) * radius
+            current_player_pos.z + math.sin(angle) * radius
         )
+        
+        # Reset particle properties
         self.age = 0
         self.velocity = Vec3(
             random.uniform(-0.5, 0.5),
@@ -182,13 +227,24 @@ class Particle(Entity):
             random.uniform(-0.5, 0.5)
         )
         self.lifetime = random.uniform(5, 10)
-        # Reset color and alpha
-        self.color = color.rgba(200, 255, 180, 180)
-        self.glow.color = color.rgba(200, 255, 180, 100)
+        
+        # Reset particle appearance
+        self.color = self.base_color
+        self.glow.color = self.glow_color
+        self.glow.alpha = 0.3 * self.glow_strength
+        
+        # Ensure glow effect is properly scaled and visible
+        self.glow.scale = Vec3(1.5, 1.5, 1.5)
+        self.glow.enabled = True
+        self.glow.visible = True
+        
+        # Add slight attraction towards player
+        direction_to_player = (current_player_pos - self.position).normalized()
+        self.velocity += direction_to_player * 0.2  # Slight bias towards player
 
 # Create particle pool and list to store them
 particles = []
-particle_count = 50  # Number of particles in the scene
+particle_count = 75  # Number of particles in the scene
 
 # Variables to track diagnostic mode
 diagnostic_mode = False
