@@ -62,7 +62,8 @@ upper_layer = Entity(
     texture=load_texture('assets/textures/map/Level_1_The_Fungal_Ascent_Layering_Inverted.png'),
     scale=(81, 1, 75),
     position=(0, 0.5, 0),  # Slightly above the ground
-    alpha=1  # Full opacity for black parts
+    alpha=1,  # Full opacity for black parts
+    collider=None  # Disable collision for the upper layer
 )
 
 # Custom shader to only show black parts
@@ -193,10 +194,35 @@ particle_count = 50  # Number of particles in the scene
 diagnostic_mode = False
 prev_t_state = False
 
+# Ground state debounce variables
+ground_check_timer = 0
+ground_check_delay = 0.1  # Time in seconds to wait before allowing state change
+last_ground_state = True
+
 # Debug text for collision checking
 collision_debug = Text(
     text='No collision data',
     position=(-0.5, 0.4),
+    scale=1.2,
+    origin=(0, 0),
+    background=True,
+    enabled=False  # Hidden by default
+)
+
+# Collision type indicator
+collision_type_text = Text(
+    text='Collision: None',
+    position=(-0.5, 0.35),
+    scale=1.2,
+    origin=(0, 0),
+    background=True,
+    enabled=False  # Hidden by default
+)
+
+# Animation state indicator
+animation_debug_text = Text(
+    text='Animation: idle',
+    position=(-0.5, 0.30),
     scale=1.2,
     origin=(0, 0),
     background=True,
@@ -222,7 +248,7 @@ player = SpriteSheetAnimation(
         'jumpdownRight' : ((0, 1), (3, 1)),
         'jumpdownLeft' : ((0,9), (3,9))
     },
-    position=(0, 0.25, 0),
+    position=(12, 0.25, -32) ,
     scale=1.5,
     rotation_x=90  # Rotate to face down for top-down view
 )
@@ -405,13 +431,22 @@ def check_collision(new_position):
                   abs(color[1] - 199/255) < 0.1 and 
                   abs(color[2] - 34/255) < 0.1)
         
+        # Update collision type indicator
+        if is_wall:
+            collision_type_text.text = 'Collision: WALL (Red)'
+        elif is_trap:
+            collision_type_text.text = 'Collision: TRAP (Green)'
+        else:
+            collision_type_text.text = 'Collision: None (Safe)'
+        
         return is_wall or is_trap
     except Exception as e:
         collision_debug.text = f'Error: {str(e)}'
+        collision_type_text.text = 'Collision: ERROR'
         return True  # Assume collision on error
 
 def check_ground(position):
-    """Check if there's solid ground beneath the player (not white/empty space)"""
+    """Check if there's solid ground (only red walls or green traps)"""
     # Convert world position to UV coordinates
     scale_x, _, scale_z = collision_ground.scale
     tex_x = int((position.x / scale_x + 0.5) * collision_ground.texture.width)
@@ -421,13 +456,22 @@ def check_ground(position):
         # Get color at position
         color = collision_ground.texture.get_pixel(tex_x, tex_z)
         
-        # Check if it's NOT white/empty (white is around 1.0, 1.0, 1.0)
-        # Ground is anything that's not white - either red walls or green traps
-        is_not_empty = not (color[0] > 0.9 and color[1] > 0.9 and color[2] > 0.9)
+        # Check specifically for red walls (ED1C24) with some tolerance
+        is_red_wall = (abs(color[0] - 237/255) < 0.1 and 
+                      abs(color[1] - 28/255) < 0.1 and 
+                      abs(color[2] - 36/255) < 0.1)
         
-        return is_not_empty
+        # Check specifically for green traps (22C722) with some tolerance
+        is_green_trap = (abs(color[0] - 34/255) < 0.1 and 
+                        abs(color[1] - 199/255) < 0.1 and 
+                        abs(color[2] - 34/255) < 0.1)
+        
+        # Return True ONLY if we hit either red wall or green trap
+        return is_red_wall or is_green_trap
+        
     except Exception as e:
-        return False  # No ground if error
+        print(f"Ground check error: {e}")
+        return False  # If there's an error, assume no ground
 
 def update():
     global score, diagnostic_mode, prev_t_state
@@ -444,6 +488,12 @@ def update():
     
     # Update UI elements based on diagnostic mode
     collision_debug.enabled = diagnostic_mode
+    collision_type_text.enabled = diagnostic_mode
+    animation_debug_text.enabled = diagnostic_mode
+    
+    # Always update collision info at current position for diagnostic display
+    if diagnostic_mode:
+        check_collision(player.position)
     
     # Update camera rotation in diagnostic mode
     if diagnostic_mode:
@@ -469,6 +519,10 @@ def update():
     
     moving = False
     squating = False
+    
+    # Update animation debug BEFORE any animation changes
+    if diagnostic_mode:
+        animation_debug_text.text = f'Animation: {current_animation} | Moving: {moving} | OnGround: {on_ground} | Dashing: {is_dashing}'
 
     # --- update jump cooldown ---
     if not can_jump:
@@ -610,15 +664,30 @@ def update():
             velocity_y = 0
             on_ground = True
     else:
-        # Check if player is still on ground
-        if not check_ground(player.position):
-            on_ground = False
-            if facePosition == 'right':
-                player.play_animation('jumpright')
-                current_animation = 'jumpright'
-            else:
-                player.play_animation('jumpleft')
-                current_animation = 'jumpleft'
+        # Ground state check with debounce
+        global ground_check_timer, last_ground_state
+        ground_check_timer += time.dt
+        
+        # Only check ground state after delay
+        if ground_check_timer >= ground_check_delay:
+            check_pos = player.position
+            current_ground_check = check_ground(check_pos)
+            
+            # Only update state if it's been stable
+            if current_ground_check != last_ground_state:
+                ground_check_timer = 0  # Reset timer
+                last_ground_state = current_ground_check
+                
+                if not current_ground_check:
+                    on_ground = False
+                    if facePosition == 'right':
+                        player.play_animation('jumpright')
+                        current_animation = 'jumpright'
+                    else:
+                        player.play_animation('jumpleft')
+                        current_animation = 'jumpleft'
+                else:
+                    on_ground = True
 
     # --- Idle ---
     if on_ground and not moving and not is_dashing and current_animation != 'idle':
